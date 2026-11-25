@@ -2,7 +2,7 @@
 
 A converter that translates in both directions between the **Neo4j Ontology Graph Spec** (OGS) and **Apache Ossie** (incubating; formerly Open Semantic Interchange, OSI).
 
-> Status: **phase 0 done**. The scaffold, pinned schemas, models, fixtures, normalizers and validation rules are in place. Conversion starts in phase 1. See [Development](#development).
+> Status: **phase 1 done**. OGS ↔ Ossie *ontology* conversion works in both directions. Every fixture round-trips losslessly, and each conversion produces a loss report. Next is phase 2: OGS tables ↔ Ossie semantic model. See [Development](#development).
 
 ## 1. The two formats at a glance
 
@@ -35,20 +35,21 @@ The converter therefore treats **OGS ↔ Ossie ontology** as its main axis. Tabl
 ## 2. Architecture
 
 ```
-  parse ─► validate ─► normalize ─► map (via IR) ─► emit ─► validate ─► loss report
+  parse ─► validate ─► normalize ─► map ─► emit ─► validate ─► loss report
 ```
 
 1. **Parse and validate the input** against its own JSON Schema, plus the library-level cross-reference rules (OGS "Consistent Schema" rules; Ossie name resolution).
 2. **Normalize** so the mapping only sees one form of each construct:
    - OGS: expand shorthand into longhand (`label` → `labels.identifier`; `must_exist`/`unique`/`key` → `constraints`), and treat `null` as absent.
    - Ossie: turn string `ai_context` into an object, resolve `prefix:local` IRIs, and lowercase names for lookups only.
-3. **Map through a small intermediate representation (IR):** `EntityType`, `Attribute`, `Link` (n-ary, with roles), `Constraint`, `Table`, `Column`, `ForeignKey`, `Mapping`, `Metric`, plus a `passthrough` bag on every element. Each direction is a pair of functions, `ogs → IR → ossie` and `ossie → IR → ogs`, so each side is written only once.
+3. **Map, using normalized longhand OGS as the hub.** We first planned a separate intermediate representation. In phase 1 it turned out that normalized OGS already *is* one: a closed, typed graph schema with an extension point (`custom`) on every element. So each direction is one module: `convert/to_ossie.py` (OGS ➜ Ossie) and `convert/to_ogs.py` (Ossie ➜ OGS). Phases 2–3 slot into the OGS `extensions` that already exist (`data_source_tables`, `data_source_mappings`).
 4. **Emit, re-validate the output, and write a loss report.** The report is machine-readable JSON plus warnings, and lists every construct that was approximated, stashed, or dropped.
 
 **Round-trip preservation.** When something has no native home in the target format, we stash it instead of dropping it:
 - Going to Ossie: core and mapping documents get `nonportable_extensions` with `vendor_name: NEO4J`; ontology elements get `annotations` keyed `neo4j:*`.
 - Going to OGS: `extensions.custom.ossie` (and `custom.ossie` on individual elements).
-- When reading, a stashed value is restored only if the native fields it relates to are unchanged. If someone edited the target format, those edits win. This is the same approach the Solid converter in `ossie-converters` uses.
+- When reading, a stashed value is restored only if the native fields it relates to are unchanged. If someone edited the target format, those edits win. This is the same approach the Solid converter in `ossie-converters` uses. For example, a stashed type is ignored if the role concept changed, and stashed counts are ignored if the multiplicity changed.
+- **Defaults are never stashed.** Both directions share the generators for default names, verbalizations, relationship types and constraint ids (`convert/common.py`). A value is stashed only if it differs from what the reverse direction would regenerate. As a result, converting there and back adds no `neo4j:*` or `custom.ossie` noise.
 
 **Implementation choice.** Python 3.11+ with Pydantic models. This matches the Ossie Python SDK and the hub-and-spoke [apache/ossie-converters](https://github.com/apache/ossie-converters) repo, so the converter can later be contributed upstream as a `neo4j/` converter. Output is validated with `jsonschema` against both specs' schemas. In CI we also run the official OGS validator (`@neo4j/ontology-graph-spec`, npm) as a cross-check.
 
@@ -56,36 +57,44 @@ The converter therefore treats **OGS ↔ Ossie ontology** as its main axis. Tabl
 
 ### 3.1 Schema layer: OGS ↔ Ossie ontology
 
+These are the rules as implemented in phase 1. "Stashed" means kept in `neo4j:*` annotations going to Ossie, or in `custom.ossie` going to OGS, and restored on the way back.
+
 | OGS | Ossie ontology | Notes |
 |---|---|---|
-| model `id`, `name`, `description` | root `name`, `description` | OGS `id` → `annotations.neo4j:id`. OGS `version` → `annotations.neo4j:version`. Ossie `version` is fixed to the spec version. |
-| Node (`labels.identifier`) | `concept`, `type: EntityType` | Concept name = identifier label. The node id is stashed. |
-| Node `description` | concept `description` | |
-| Node `aliases` | `annotations.neo4j:aliases` | Ossie concepts have no synonyms field (`ai_context` exists only at the ontology root). |
-| Node `reference` | concept `iri` | |
-| `labels.implied` | `extends` | If an implied label is not itself a node, emit a stub `EntityType` concept. |
-| `labels.optional` | `annotations.neo4j:optional_labels` | |
-| Property | binary relationship from the concept to a value concept, `multiplicity: ManyToOne` | e.g. `{Person} has name {String}`. Relationship `name` = property id. |
-| Property `type` | role concept: a built-in (`String`, `Integer`, `Float`, `Boolean`, `Date`, `DateTime`) | Types without a built-in (`DURATION`, `POINT`, `UUID`, `LOCAL TIME`, `ZONED *`, `LIST<…>`, `VECTOR<…>`) get a generated `ValueType` that `extends` the nearest built-in, with the exact Neo4j type in `annotations.neo4j:type` (and `neo4j:dimension` for vectors). |
-| Property `pattern`, `one_of` | generated `ValueType` + `requires`, or annotation | Use `requires` only once the expression grammar is pinned down (see §6). Until then, use annotations. |
-| `KEY` constraint (single or composite) | `identify_by` + `multiplicity: OneToOne` on single-property keys | |
-| `UNIQUE` | `multiplicity: OneToOne` | |
-| `EXISTS` | `annotations.neo4j:must_exist` (later a `requires` expression) | |
-| `PROPERTY_TYPE` | implied by the role concept | |
-| Relationship | ontology relationship declared on the `from` concept, with a role for the `to` concept | `name` = relationship id. `verbalizes: ['{From} TYPE {To}']`. The OGS `type` is stashed as `neo4j:type`. |
-| Relationship end counts | `multiplicity` where it can express them (max 1 → `ManyToOne`, both sides → `OneToOne`) | Exact counts are always stashed in `neo4j:from_counts` / `neo4j:to_counts`. |
-| Relationship properties | **extra roles** on the relationship (n-ary) | e.g. `{Person} acted in {Movie} as {String}`. This is a natural fit, not a lossy one. |
-| Constraints and indexes on relationships, `extensions.indexes`, `display` | annotations | Carried for round-tripping only. |
+| model `name`, `description` | root `name`, `description` | `id` and `version` are stashed when they differ from the defaults (kebab-case name; `1.0.0`). OGS output always declares schema 1.1.0. |
+| Node with `labels.identifier` | `EntityType` concept named after the label | Node id = kebab-case of the concept name, unless one is stashed. |
+| Node `description`, `reference` | concept `description`, `iri` | IRIs are compacted with the document's `prefixes` when writing Ossie. |
+| Node `aliases` | stashed | Ossie concepts have no synonyms field. |
+| `labels.implied` | `extends` | An implied label with no node becomes a stub concept (`neo4j:stub`). Going back, `extends` is flattened transitively; the exact `extends` list is stashed only if it differs. |
+| `labels.optional` | **unary relationship** (`{Flight} was canceled`) | A native mapping in both directions. Optional labels are OGS's state labels, and unary relationships are Ossie's flags. |
+| Property | binary relationship to a value concept | `{Person} has name {String}`. Relationship name = property id. |
+| Property `type` | role concept | STRING, INTEGER, FLOAT, BOOLEAN, DATE and LOCAL DATETIME map to built-ins. Every other type uses a **generated** value type `Neo4j<Type>` that extends the nearest built-in, so the exact type is native in Ossie: for example `Neo4jZonedDatetime` extends `DateTime`, and `Neo4jVectorFloat32` and `Neo4jPoint` extend `String`. |
+| `LIST<X>` | relationship to `X` with **no multiplicity** | This is how Ossie expresses a multi-valued attribute. |
+| single-valued property | `multiplicity: ManyToOne` | |
+| single-property `UNIQUE` | `multiplicity: OneToOne` | |
+| `KEY` (single or composite) | `identify_by` | A single-property key also makes the attribute OneToOne. Only the first KEY maps; others are stashed. |
+| `EXISTS`, composite `UNIQUE`, `PROPERTY_TYPE`, custom constraint names | stashed (`neo4j:constraints`) | Only constraints that wouldn't be regenerated identically are stashed. |
+| `name`, `pattern`, `one_of`, `dimension`, property `aliases` | stashed | Ossie's `requires` grammar isn't pinned down yet (§6). |
+| Relationship | relationship declared on the `from` concept, with the `to` concept as its role | Name = snake_case of the type, or `<type>_<target>` if that name is already taken. Verbalization: `{Person} acted in {Movie}`. A self-relationship names its role `target`. |
+| Relationship end counts | `multiplicity` | `from` at most 1 → `ManyToOne`; both ends at most 1 → `OneToOne`. Counts that this can't express exactly are stashed and reported. This depends on how OGS counts are read (§6). |
+| Relationship properties | **extra named roles** (n-ary) | `{Person} acted in {Movie} with role {String:role}`. The property's metadata goes in the role's `neo4j:property` annotation. A LIST-valued property becomes a single-valued role, which is reported as approximated. |
+| End given by label only, or no end | stub concept, or `Any` | |
+| Indexes, `display`, `custom` | stashed | |
+| `extensions.data_source_*` | stashed for now | Mapped natively in phases 2 and 3. |
 
-**Reverse-direction specifics (Ossie → OGS):**
-- `ValueType` concepts are resolved down to their built-in base to choose the Neo4j `type`. The full `extends` chain is stashed.
-- Binary relationships whose second role is a **value** concept become **properties**. Those whose second role is an **entity** concept become **relationships**. Relationship `type` = stashed type, or the name in UPPER_SNAKE_CASE.
-- N-ary relationships (three or more roles):
-  - If exactly two roles are entities, the entity roles become `from`/`to` and the value roles become relationship properties.
-  - Otherwise the relationship is **reified** as an intermediate node with one relationship per role. This is reported as approximated.
-- `extends` → `labels.implied`, flattened transitively, because OGS does not support inheritance.
-- `identify_by` → `KEY` constraint over the corresponding properties. `identify_by` may name a relationship *inherited* from a supertype: in the upstream SAP example, `Customer` is identified by `BusinessPartner.nr`. The KEY therefore goes on the subtype node, over a property copied down from the supertype.
-- `derived_by`, `requires`, and unary relationships → stashed in `extensions.custom.ossie` and reported. OGS has no equivalent.
+**Reverse-direction specifics (Ossie ➜ OGS).** Each relationship on an EntityType concept is classified by its roles:
+
+| Roles | OGS |
+|---|---|
+| none (unary) | an optional label: `canceled` → `Canceled` |
+| one value concept | a property |
+| one entity concept (or `Any`) | a relationship. Its **type comes from the verbalization**: `{City} is located in {State}` → `IS_LOCATED_IN`, falling back to the name in UPPER_SNAKE_CASE |
+| one entity concept plus value concepts | a relationship with properties |
+| anything else | **reified** as an intermediate node, with one relationship per entity role and the value roles as properties. Reported as approximated; the original is stashed and restored on the way back. Example: `{Flight} at {DateTime} registers {DegreesLongitude}` |
+
+- `ValueType` concepts are flattened: each is resolved through `extends` to a Neo4j type, and the definitions are stashed. `Decimal` becomes `FLOAT`, reported as approximated.
+- `identify_by` → a `KEY` constraint, if every member is an attribute. Members may be **inherited** from a supertype: in the upstream SAP example, `Customer` is identified by `BusinessPartner.nr`. The property is then copied down onto the subtype node, marked `inherited_from`. If `identify_by` includes a link (Flights: `City` is identified by `[name, state]`), no KEY is written, because a Neo4j KEY can't cover a relationship. That case is reported.
+- `derived_by`, `requires`, `ai_context`, `prefixes`, non-`neo4j:` annotations, and the deprecated embedded `ontology_mappings` → stashed and reported. Concept order and relationship order are stashed only if they differ from what OGS ➜ Ossie would produce.
 
 ### 3.2 Physical layer: OGS tables ↔ Ossie semantic model
 
@@ -149,25 +158,45 @@ Package layout (`src/ossie_neo4j/`):
 | `ossie/normalize.py` | Turns a string `ai_context` into an object. Expands `prefix:local` IRIs, and provides `compact_iri` for the reverse. |
 | `ogs/rules.py`, `ossie/rules.py` | The cross-reference rules that JSON Schema can't express: the OGS "Core" rules, plus Ossie name-resolution and ontology rules. |
 | `pipeline.py` | `read()`: parse ➜ schema ➜ model ➜ rules ➜ normalize. A stage runs only if the earlier stages found no errors. |
-| `cli.py` | `ossie-neo4j validate` and `ossie-neo4j normalize`. |
+| `convert/to_ossie.py`, `convert/to_ogs.py` | The two directions of the ontology conversion (§3.1). |
+| `convert/common.py` | Conventions both directions share: annotation keys, default ids, names, verbalizations and relationship types, constraint derivation, and count ⇄ multiplicity. |
+| `convert/types.py` | Neo4j type ⇄ value concept tables, generated `Neo4j*` value types, and the value-type resolver. |
+| `convert/report.py` | The loss report, with entries of kind `stashed`, `approximated` or `dropped`. |
+| `convert/__init__.py` | Public API: `to_ossie()` and `to_neo4j()`. Each validates the input, converts it, re-validates the output, and returns the output with its loss report. |
+| `cli.py` | `ossie-neo4j validate`, `normalize`, `to-ossie` and `to-neo4j`. |
 
-## 4. CLI (planned for phase 1)
+## 4. CLI
+
+Phase 1:
+
+```bash
+uv run ossie-neo4j to-ossie tests/fixtures/ogs/movies.yaml -o movies.ontology.yaml --report loss.json
+```
+
+```bash
+uv run ossie-neo4j to-neo4j tests/fixtures/ossie/flights.ontology.yaml -o flights.ogs.yaml
+```
+
+Output goes to stdout as YAML unless `-o` is given (`.yaml` or `.json`). A summary of the loss report goes to stderr. Flags:
+- `--report FILE` writes the full loss report as JSON;
+- `--strict` exits with code 2 if anything was approximated or dropped;
+- `--no-stash` produces clean output with no vendor annotations or custom data. Everything that would have been stashed is reported as dropped.
+
+Planned for phases 2–3, once semantic models and mappings are converted:
 
 ```bash
 ossie-neo4j to-ossie model.ogs.yaml --out ./out/
 ```
-→ `out/<id>.ontology.yaml`, plus `<id>.semantic_model.yaml` and `<id>.mapping.yaml` when the input has tables and mappings.
+→ `<id>.ontology.yaml`, plus `<id>.semantic_model.yaml` and `<id>.mapping.yaml`.
 
 ```bash
-ossie-neo4j to-neo4j --ontology x.ontology.yaml --semantic-model x.semantic_model.yaml --mapping x.mapping.yaml --out model.ogs.yaml
+ossie-neo4j to-neo4j --ontology x.ontology.yaml --semantic-model x.semantic_model.yaml --mapping x.mapping.yaml -o model.ogs.yaml
 ```
 
 ```bash
-ossie-neo4j to-neo4j --semantic-model x.semantic_model.yaml --out model.ogs.yaml
+ossie-neo4j to-neo4j --semantic-model x.semantic_model.yaml -o model.ogs.yaml
 ```
-This runs in core-only mode.
-
-Common flags: `--report loss.json`, `--strict` (fail on any lossy construct), `--no-stash` (clean output with no vendor extensions).
+The last form runs in core-only mode.
 
 ## 5. Testing strategy
 
@@ -181,7 +210,7 @@ Common flags: `--report loss.json`, `--strict` (fail on any lossy construct), `-
 
 ## 6. Open questions / risks
 
-1. **OGS cardinality direction.** It is unclear whether `to.min_count` bounds relationships per `to` node or per `from` node; the docs and examples are ambiguous. We need to confirm with the OGS authors before mapping counts to `multiplicity`.
+1. **OGS cardinality direction.** It is unclear whether `to.min_count` bounds relationships per `to` node or per `from` node; the docs and examples are ambiguous. Phase 1 reads a count as bounding how many relationships *each node at that end* has; this matches the docs' reading of `to: min_count: 1` as "every movie has at least one actor". The rule lives in one function, `convert/common.py:link_multiplicity`, so it is easy to flip once the OGS authors confirm.
 2. **Ossie `requires` / `derived_by` grammar.** It is not formally pinned, so we stash these instead of translating them, until a grammar exists in the spec.
 3. **Ossie version churn.** 0.3.0.dev0 changes weekly (recent renames: `custom_extensions` → `nonportable_extensions`, `uri` → `iri`, and the `semantic_model` wrapper was removed). We pin a commit and isolate Ossie models behind one module.
 4. **`NEO4J` vendor token.** Propose registering it in Ossie's `extensions/vendors.md`.
@@ -192,8 +221,8 @@ Common flags: `--report loss.json`, `--strict` (fail on any lossy construct), `-
 
 | Phase | Deliverable |
 |---|---|
-| 0 | Repo scaffold, pinned schemas, Pydantic models for both specs, fixtures, normalizers |
-| 1 | OGS nodes/relationships/properties ↔ Ossie ontology, with stashing and the loss report |
+| 0 ✅ | Repo scaffold, pinned schemas, Pydantic models for both specs, fixtures, normalizers |
+| 1 ✅ | OGS nodes/relationships/properties ↔ Ossie ontology, with stashing and the loss report |
 | 2 | OGS tables ↔ Ossie semantic model (datasets, fields, keys, FK relationships, metrics stash) |
 | 3 | OGS mappings ↔ Ossie mapping document |
 | 4 | Core-only mode, Ossie 0.1.1 → 0.3.0 migration on input, CLI polish |
