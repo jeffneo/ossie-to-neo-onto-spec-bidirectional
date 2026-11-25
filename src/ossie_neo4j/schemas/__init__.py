@@ -62,6 +62,20 @@ def _validator(kind: DocumentKind) -> Draft202012Validator:
     return Draft202012Validator(schema, registry=_registry())
 
 
+LEGACY_OSSIE_VERSION = "0.1.1"
+
+
+@cache
+def _legacy_validator() -> Draft202012Validator:
+    schema = _read(f"ossie-{LEGACY_OSSIE_VERSION}", "osi-schema.json")
+    return Draft202012Validator(schema)
+
+
+def validate_legacy_schema(doc: dict[str, Any]) -> list[Issue]:
+    """Validate a 0.1.1 (OSI) document against its own vendored schema, before migration."""
+    return _issues(_legacy_validator(), doc)
+
+
 def validate_schema(doc: dict[str, Any], kind: DocumentKind) -> list[Issue]:
     """Validate ``doc`` against the pinned JSON Schema for ``kind``.
 
@@ -69,8 +83,12 @@ def validate_schema(doc: dict[str, Any], kind: DocumentKind) -> list[Issue]:
     express. Cross-reference rules live in ``ossie_neo4j.ogs.rules`` and
     ``ossie_neo4j.ossie.rules``.
     """
+    return _issues(_validator(kind), doc)
+
+
+def _issues(validator: Draft202012Validator, doc: dict[str, Any]) -> list[Issue]:
     issues = []
-    for err in _validator(kind).iter_errors(doc):
+    for err in validator.iter_errors(doc):
         issues.append(
             Issue(
                 code="schema_violation",

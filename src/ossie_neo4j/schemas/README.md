@@ -7,6 +7,8 @@ These are vendored copies of the normative JSON Schemas. They are loaded offline
 | `ogs-1.1.0/schema.json` | https://neo4j.com/docs/ontology-graph-spec/1.1.0/schema.json, captured 2026-11-24 |
 | `ossie-0.3.0.dev0/{ossie-schema,ontology,mapping}.json` | [apache/ossie](https://github.com/apache/ossie) at commit `6792db4f553695f258cbe288f9a41b06f1ac2169`, files `core-spec/ossie-schema.json`, `ontology/ontology.json` and `ontology/mapping.json`. Licensed under Apache-2.0 |
 
+`ossie-0.1.1/osi-schema.json` is from [apache/ossie](https://github.com/apache/ossie) at tag `osi-0.1.1-rc1` (commit `faf581054dcf7964d5fe0ceae7d6f415c8ce32a5`), file `core-spec/osi-schema.json`. It validates 0.1.1 input before migration.
+
 The Ossie schemas refer to each other through `https://raw.githubusercontent.com/apache/ossie/main/...` URLs. `ossie_neo4j.schemas` resolves those URLs to the local copies, so validation never fetches over the network and always uses the pinned commit.
 
 To move to a new Ossie commit:

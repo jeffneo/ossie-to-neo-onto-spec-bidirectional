@@ -12,14 +12,15 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from .io import DocumentKind, detect_kind, load
-from .issues import Issue, errors, join_path
+from .issues import Issue, Severity, errors, join_path
 from .ogs import models as ogs_models
 from .ogs.normalize import normalize as ogs_normalize
 from .ogs.rules import check_rules as ogs_rules
 from .ossie import models as ossie_models
+from .ossie.migrate import is_legacy, migrate
 from .ossie.normalize import normalize as ossie_normalize
 from .ossie.rules import check_ontology, check_semantic_model
-from .schemas import validate_schema
+from .schemas import validate_legacy_schema, validate_schema
 
 _MODEL_FOR: dict[DocumentKind, type[BaseModel]] = {
     DocumentKind.OGS: ogs_models.GraphModel,
@@ -50,8 +51,36 @@ def read(source: str | Path | dict[str, Any], kind: DocumentKind | None = None) 
     mistake doesn't cascade into many issues (the OGS libraries do the same).
     """
     raw = source if isinstance(source, dict) else load(source)
+    migration: list[Issue] = []
+    if is_legacy(raw):
+        # Ossie 0.1.1 (OSI): validate against its own schema, then migrate to 0.3.0.dev0.
+        result = Loaded(kind=DocumentKind.OSSIE_SEMANTIC_MODEL, raw=raw)
+        result.issues += validate_legacy_schema(raw)
+        if not result.ok:
+            return result
+        docs, migration = migrate(raw)
+        if len(docs) != 1:
+            result.issues.append(
+                Issue(
+                    "multiple_semantic_models",
+                    f"this 0.1.1 document holds {len(docs)} semantic models; split it with "
+                    "`ossie-neo4j migrate` first",
+                    "semantic_model",
+                )
+            )
+            return result
+        raw = docs[0]
+        migration.insert(
+            0,
+            Issue(
+                "migrated_from_0_1_1",
+                "read as Ossie 0.1.1 and migrated to 0.3.0.dev0",
+                "version",
+                Severity.WARNING,
+            ),
+        )
     kind = kind or detect_kind(raw)
-    result = Loaded(kind=kind, raw=raw)
+    result = Loaded(kind=kind, raw=raw, issues=migration)
 
     result.issues += validate_schema(raw, kind)
     if not result.ok:

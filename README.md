@@ -2,7 +2,7 @@
 
 A converter that translates in both directions between the **Neo4j Ontology Graph Spec** (OGS) and **Apache Ossie** (incubating; formerly Open Semantic Interchange, OSI).
 
-> Status: **phase 3 done**. One OGS document converts to and from the full set of three Ossie documents: *ontology*, *semantic model* and *mapping*. Every fixture, including the upstream Flights and SAP ontology / semantic model / mapping sets, round-trips losslessly, and each conversion produces a loss report. Next is phase 4: core-only mode, Ossie 0.1.1 input, and CLI polish. See [Development](#development).
+> Status: **phase 4 done**. One OGS document converts to and from the full set of three Ossie documents: *ontology*, *semantic model* and *mapping*. Ossie 0.1.1 (OSI) input is migrated on read. A semantic model on its own can be turned into a full graph (core-only mode). Every fixture round-trips losslessly, and each conversion produces a loss report. Next is phase 5: contributing upstream. See [Development](#development) and [CLI](#4-cli).
 
 ## 1. The two formats at a glance
 
@@ -139,16 +139,29 @@ As implemented in phase 3 (`convert/mappings.py`). A mapping document is produce
 
 Without nodes or without tables there is no mapping document. The OGS mappings then ride along in the ontology's annotations or on the semantic model's `NEO4J` extension, as in phase 2.
 
-### 3.4 "Core-only" mode
+### 3.4 Core-only mode
 
-Many Ossie producers (dbt, Snowflake, etc.) emit **only a semantic model**, with no ontology. For those inputs, the converter derives a graph:
-- each dataset becomes a node (label = PascalCase of the dataset name);
-- each field becomes a property;
-- `primary_key` becomes a `KEY` constraint;
-- each relationship becomes a relationship with `to.max_count: 1`, typed with the relationship name in UPPER_SNAKE_CASE;
-- `data_source_tables` and `data_source_mappings` are filled in automatically, so the result can be loaded with Aura Data Importer.
+Many Ossie producers (dbt, Snowflake, etc.) emit **only a semantic model**, with no ontology. Converted as is, it gives OGS tables and no nodes (§3.2). With `derive_graph=True` (`--derive-graph`), the converter derives a graph instead. This is implemented in `convert/derive.py`. It synthesizes an ontology and a mapping document from the semantic model, then runs all three through the normal converter, so every rule of §3.1–3.3 applies unchanged.
 
-In the reverse direction, `--target semantic-model` emits only the core document, for consumers that don't read the ontology layer.
+- Each dataset becomes a node labelled with the dataset name in PascalCase (`store_sales` → `StoreSales`).
+- Each field over a plain column becomes a property typed by its `datatype`. A field with no `datatype` (every 0.1.1 field) becomes `STRING`, reported.
+- `primary_key` → `KEY` constraint. A dataset without one gets a node but no key and no mapping, reported.
+- Each relationship → a relationship from the `from` dataset (the many side) to the `to` dataset, with `from.max_count: 1`. Its type comes from the relationship name (`store_sales_to_customer` → `STORE_SALES_TO_CUSTOMER`).
+- Fields used only as foreign keys are **not** node properties; the relationship replaces them. Derived (expression) fields aren't properties either, which is reported. Both remain table columns.
+- `data_source_mappings` are generated: one `NODE` mapping per keyed dataset, and one `RELATIONSHIP` mapping per relationship that references the target's primary key. So the result can be loaded with Data Importer.
+
+The derived OGS converts back to all three Ossie documents. The semantic model comes back unchanged.
+
+### 3.5 Ossie 0.1.1 (OSI) input
+
+0.1.1 documents (a root `semantic_model: [...]` list) are detected and validated against the vendored 0.1.1 schema, then migrated to 0.3.0.dev0 on read (`ossie/migrate.py`). Every command accepts them, and `ossie-neo4j migrate` writes the migrated documents out. The migration:
+- splits the `semantic_model` list into one document per model. `read()` and the conversions need exactly one; `migrate --out-dir` writes them all.
+- drops the informational root `dialects` / `vendors` lists.
+- turns `custom_extensions` (JSON *string* `data`) into `nonportable_extensions` (object `data`). A value that isn't an object is wrapped as `{"value": ...}`, and a string that isn't JSON as `{"raw": ...}`.
+- promotes an expression to portable `sql` when every dialect gives the same plain column name. That covers nearly all 0.1.1 fields. Other expressions stay `dialects`.
+- maps `primary_key`, `unique_keys` and relationship columns, which named **source columns** in 0.1.1 and name **fields** since upstream PR #486, to the field over each column, adding a field where none exists. The upstream 0.1.1 tpcds example needs this for `ss_ticket_number`.
+
+Each step is reported as an input issue: a warning that the document was migrated, plus info messages, which `-v` shows.
 
 ## Development
 
@@ -185,35 +198,70 @@ Package layout (`src/ossie_neo4j/`):
 | `convert/common.py` | Conventions both directions share: annotation keys, default ids, names, verbalizations and relationship types, constraint derivation, and count ⇄ multiplicity. |
 | `convert/types.py` | Neo4j type ⇄ value concept tables, generated `Neo4j*` value types, and the value-type resolver. Also Neo4j type ⇄ Ossie field `datatype`, and source-type inference. |
 | `convert/report.py` | The loss report, with entries of kind `stashed`, `approximated` or `dropped`. |
+| `convert/derive.py` | Core-only mode: synthesizes an ontology and a mapping from a semantic model on its own (§3.4). |
+| `ossie/migrate.py` | Ossie 0.1.1 → 0.3.0.dev0 migration, applied on read (§3.5). |
 | `convert/__init__.py` | Public API: `to_ossie(ogs)` gives up to three documents (ontology, semantic model, mapping); `to_neo4j(ontology_or_sm, semantic_model=..., mapping=...)` gives one OGS document. Each validates the inputs, converts them, re-validates the outputs, and returns `Conversion.documents` with a loss report. `to_neo4j` warns if the mapping's `*_ref` names don't match the documents given. |
-| `cli.py` | `ossie-neo4j validate`, `normalize`, `to-ossie` and `to-neo4j`. |
+| `cli.py` | `ossie-neo4j convert`, `to-ossie`, `to-neo4j`, `validate`, `normalize` and `migrate`. |
 
 ## 4. CLI
 
+`convert` works out the direction from its inputs: one OGS document, or up to one each of an Ossie ontology, semantic model and mapping.
+
 ```bash
-uv run ossie-neo4j to-ossie tests/fixtures/ogs/movies-import.yaml --out-dir out/ --report loss.json
+uv run ossie-neo4j convert tests/fixtures/ogs/movies-import.yaml --out-dir out/
 ```
 This writes `out/movies-import.ontology.yaml`, `.semantic_model.yaml` and `.mapping.yaml`.
 
 ```bash
-uv run ossie-neo4j to-neo4j out/movies-import.ontology.yaml --semantic-model out/movies-import.semantic_model.yaml --mapping out/movies-import.mapping.yaml -o back.ogs.yaml
+uv run ossie-neo4j convert out/movies-import.*.yaml -o back.ogs.yaml
 ```
 
 ```bash
-uv run ossie-neo4j to-neo4j tests/fixtures/ossie/tpcds_semantic_model.yaml -o tpcds.ogs.yaml
+uv run ossie-neo4j convert tests/fixtures/ossie-0.1.1/tpcds_semantic_model.yaml --derive-graph -o tpcds.ogs.yaml
 ```
-A semantic model on its own produces an OGS document with tables and no nodes. Deriving nodes from datasets is core-only mode, in phase 4.
+This reads Ossie 0.1.1, migrates it, and derives a graph in core-only mode.
+
+The direction-specific commands take the same flags:
+
+```bash
+uv run ossie-neo4j to-ossie model.ogs.yaml --only semantic-model
+```
+
+```bash
+uv run ossie-neo4j to-neo4j x.ontology.yaml --semantic-model x.semantic_model.yaml --mapping x.mapping.yaml -o x.ogs.yaml
+```
+
+```bash
+uv run ossie-neo4j migrate old_osi_model.yaml --out-dir migrated/
+```
+
+```bash
+uv run ossie-neo4j validate any.yaml other.json
+```
+
+```bash
+uv run ossie-neo4j normalize model.ogs.yaml
+```
 
 Output:
-- `to-ossie` writes an ontology if the model has nodes, a semantic model if it has tables, and a mapping document if it has nodes, tables and mappings.
-- Use `--out-dir DIR` (with `--format yaml|json`) for more than one document. `-o FILE` works when there's one.
-- Without either option, YAML goes to stdout, one `---`-separated document per output.
+- Without `-o` or `--out-dir`, YAML goes to stdout, one `---`-separated document per output.
+- `-o FILE` (`.yaml` or `.json`) works when there's one output document.
+- `--out-dir DIR` (with `--format yaml|json`) writes `<id>.<kind>.<format>`.
 - A summary of the loss report goes to stderr.
 
 Flags:
-- `--report FILE` writes the full loss report as JSON;
-- `--strict` exits with code 2 if anything was approximated or dropped;
-- `--no-stash` produces clean output with no vendor annotations, extensions or custom data. Everything that would have been stashed is reported as dropped.
+
+| Flag | Effect |
+|---|---|
+| `--report FILE` | Write the full loss report as JSON |
+| `--strict` | Exit 2 if anything was approximated or dropped |
+| `--no-stash` | Clean output, with no vendor annotations, extensions or custom data. Everything that would have been stashed is reported as dropped |
+| `--only KIND` | `to-ossie` / `convert`: emit only `ontology`, `semantic-model` or `mapping` (repeatable) |
+| `--derive-graph` | `to-neo4j` / `convert`: core-only mode for a semantic model given on its own (§3.4) |
+| `-v` | Also print info messages about the inputs, such as the 0.1.1 migration steps |
+| `--version` | Print the version |
+
+Exit codes: `0` success, `1` invalid input or usage error, `2` lossy result under `--strict`.
 
 ## 5. Testing strategy
 
@@ -242,7 +290,7 @@ Flags:
 | 1 ✅ | OGS nodes/relationships/properties ↔ Ossie ontology, with stashing and the loss report |
 | 2 ✅ | OGS tables ↔ Ossie semantic model (datasets, fields, keys, FK relationships, metrics stash) |
 | 3 ✅ | OGS mappings ↔ Ossie mapping document |
-| 4 | Core-only mode, Ossie 0.1.1 → 0.3.0 migration on input, CLI polish |
+| 4 ✅ | Core-only mode, Ossie 0.1.1 → 0.3.0 migration on input, CLI polish |
 | 5 | Upstream: contribute to `apache/ossie-converters`, and propose the `NEO4J` vendor token |
 
 ## References

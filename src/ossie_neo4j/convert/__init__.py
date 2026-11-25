@@ -15,7 +15,10 @@ from typing import Any
 
 from ..io import DocumentKind
 from ..issues import Issue, Severity
+from ..ossie.models import MappingDocument, Ontology
+from ..ossie.normalize import normalize as ossie_normalize
 from ..pipeline import read
+from .derive import derive_ontology_and_mapping
 from .report import Loss, LossEntry, LossReport
 from .to_ogs import ossie_to_ogs
 from .to_ossie import ogs_to_ossie
@@ -93,12 +96,16 @@ def to_neo4j(
     semantic_model: Source | None = None,
     mapping: Source | None = None,
     stash: bool = True,
+    derive_graph: bool = False,
 ) -> Conversion:
     """Convert Ossie documents to one OGS document.
 
     ``source`` may be an ontology or a semantic model. To combine an ontology with its semantic
     model, pass ``semantic_model=`` as well. To add the mapping document that links the two,
     also pass ``mapping=``.
+
+    ``derive_graph=True`` is core-only mode, for a semantic model given on its own. It derives
+    nodes, relationships and mappings from the datasets (see ``convert/derive.py``).
     """
     onto = sm = None
     issues: list[Issue] = []
@@ -137,7 +144,22 @@ def to_neo4j(
                         Severity.WARNING,
                     )
                 )
-    out, report = ossie_to_ogs(onto, sm, md, stash=stash)
+    if derive_graph:
+        if onto is not None or md is not None or sm is None:
+            raise ConversionError("derive_graph needs a semantic model on its own", [])
+        report = LossReport("ossie->ogs")
+        onto_d, map_d = derive_ontology_and_mapping(sm, report)
+        onto = ossie_normalize(Ontology.model_validate(onto_d))[0]
+        out, report = ossie_to_ogs(
+            onto,
+            sm,
+            MappingDocument.model_validate(map_d),
+            stash=stash,
+            report=report,
+            keep_mapping_document=False,
+        )
+    else:
+        out, report = ossie_to_ogs(onto, sm, md, stash=stash)
     _check_output(out, DocumentKind.OGS)
     return Conversion({DocumentKind.OGS: out}, report, issues)
 

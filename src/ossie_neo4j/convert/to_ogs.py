@@ -686,6 +686,8 @@ def ossie_to_ogs(
     mapping: MappingDocument | None = None,
     *,
     stash: bool = True,
+    report: LossReport | None = None,
+    keep_mapping_document: bool = True,
 ) -> tuple[dict, LossReport]:
     """Convert normalized Ossie documents to one longhand OGS document (as a dict).
 
@@ -694,13 +696,15 @@ def ossie_to_ogs(
     - The mapping document, which needs both of the above, gives
       ``extensions.data_source_mappings``.
 
-    At least an ontology or a semantic model is needed.
+    At least an ontology or a semantic model is needed. ``keep_mapping_document=False`` skips
+    keeping an inexpressible mapping document whole. Core-only mode uses this for its
+    synthesized mapping, which isn't worth preserving.
     """
     if onto is None and semantic_model is None:
         raise ValueError("need an ontology, a semantic model, or both")
     if mapping is not None and (onto is None or semantic_model is None):
         raise ValueError("a mapping document needs both its ontology and its semantic model")
-    report = LossReport("ossie->ogs")
+    report = report or LossReport("ossie->ogs")
     t = None
     if onto is not None:
         t = _ToOgs(onto, stash, report)
@@ -745,7 +749,7 @@ def ossie_to_ogs(
             ext.setdefault("custom", {}).setdefault(OSSIE, {})["semantic_model"] = sm_stash
 
     if mapping is not None:
-        _apply_mapping(out, onto, mapping, t, index, stash, report)
+        _apply_mapping(out, onto, mapping, t, index, stash and keep_mapping_document, report)
     return out, report
 
 
