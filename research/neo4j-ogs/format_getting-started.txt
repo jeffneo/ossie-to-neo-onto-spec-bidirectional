@@ -1,0 +1,95 @@
+
+  Getting started
+A first model
+A small ontology of people, the movies they act in and the roles they play:
+YAML
+schema: "https://neo4j.com/docs/ontology-graph-spec/1.0.0/schema.json"
+version: "1.0.0"
+id: movies
+name: Movies
+description: People and the movies they act in.
+nodes:
+  person:
+    label: Person
+    description: A person who acts in movies.
+    aliases: [Actor, Performer]
+    properties:
+      name:
+        type: STRING
+        description: The person's full name.
+        must_exist: true
+  movie:
+    label: Movie
+    description: A film released to the public.
+    aliases: [Film]
+    properties:
+      title:
+        type: STRING
+        description: The title the movie was released under.
+        unique: true
+relationships:
+  acted-in:
+    type: ACTED_IN
+    description: The person appeared in the movie as a cast member.
+    from:
+      node: person
+    to:
+      node: movie
+    properties:
+      role:
+        type: STRING
+        description: The character the person played.
+JSON
+{
+  "schema": "https://neo4j.com/docs/ontology-graph-spec/1.0.0/schema.json",
+  "version": "1.0.0",
+  "id": "movies",
+  "name": "Movies",
+  "description": "People and the movies they act in.",
+  "nodes": {
+    "person": {
+      "label": "Person",
+      "description": "A person who acts in movies.",
+      "aliases": ["Actor", "Performer"],
+      "properties": {
+        "name": { "type": "STRING", "description": "The person's full name.", "must_exist": true }
+      }
+    },
+    "movie": {
+      "label": "Movie",
+      "description": "A film released to the public.",
+      "aliases": ["Film"],
+      "properties": {
+        "title": { "type": "STRING", "description": "The title the movie was released under.", "unique": true }
+      }
+    }
+  },
+  "relationships": {
+    "acted-in": {
+      "type": "ACTED_IN",
+      "description": "The person appeared in the movie as a cast member.",
+      "from": { "node": "person" },
+      "to": { "node": "movie" },
+      "properties": {
+        "role": { "type": "STRING", "description": "The character the person played." }
+      }
+    }
+  }
+}
+In this model:
+schema, version and id are required. schema identifies the version of the specification, and version is your
+own revision of the model.
+nodes and relationships are keyed by ids you choose, which relationships and constraints use to refer to them.
+description and aliases carry the meaning of each part. See Meaning.
+label, must_exist and unique are shorthand.
+Validate it
+The specification is defined by a JSON Schema at https://neo4j.com/docs/ontology-graph-spec/1.1.0/schema.json. You can
+validate a model with any JSON Schema validator, for example:
+check-jsonschema --schemafile https://neo4j.com/docs/ontology-graph-spec/1.1.0/schema.json movies.yaml
+The schema can’t check references within a document, such as whether a relationship points at a node that exists. Those
+checks, and a few others, are the rules of the format.
+Next steps
+Concepts explains how a model captures the meaning of a domain.
+The reference describes every field.
+  Overview
+  Concepts

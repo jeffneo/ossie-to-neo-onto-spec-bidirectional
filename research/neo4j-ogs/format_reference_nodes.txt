@@ -1,0 +1,76 @@
+
+  Nodes
+A node describes a kind of entity in the domain. Nodes are listed under nodes, keyed by node id.
+nodes:
+  person:
+    label: Person
+    description: A person who acts in or directs movies.
+    aliases: [Actor, Director]
+    properties:
+      name:
+        type: STRING
+        must_exist: true
+Node
+A node of the graph.
+ | 
+ | Field
+ | Type
+ | Required
+ | Description
+ | label
+ | string
+ | No
+ | Shorthand for the identifying label. Expanded into labels when the model is decoded.
+ | labels
+ | labels
+ | No
+ | Labels of the node.
+ | properties
+ | map of property
+ | No
+ | Properties of the node keyed by id.
+ | constraints
+ | map of node constraint
+ | No
+ | Constraints on the node keyed by id.
+ | extensions
+ | node extensions
+ | No
+ | Extensions for the node.
+ | description
+ | string
+ | No
+ | Description of the node.
+ | aliases
+ | list of strings
+ | No
+ | Alternative names for the node.
+ | reference
+ | string
+ | No
+ | Reference or URI of an external resource describing the node.
+Labels
+The labels of a node.
+ | 
+ | Field
+ | Type
+ | Required
+ | Description
+ | identifier
+ | string
+ | No
+ | The label which identifies the node.
+ | implied
+ | list of strings
+ | No
+ | Labels implied by the node in addition to the identifier.
+ | optional
+ | list of strings
+ | No
+ | Labels which may be present on the node but aren’t required.
+ | extensions
+ | custom data
+ | No
+ | Extensions for the labels.
+  Model
+  Relationships

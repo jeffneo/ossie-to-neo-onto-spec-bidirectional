@@ -1,0 +1,138 @@
+
+  Getting started
+This guide installs a library, then loads and validates a model.
+Install the library
+Gradle
+implementation("org.neo4j.spec.graph:ontology-graph-spec:1.0.0")
+Maven
+<dependency>
+    <groupId>org.neo4j.spec.graph</groupId>
+    <artifactId>ontology-graph-spec</artifactId>
+    <version>1.0.0</version>
+</dependency>
+npm
+npm install @neo4j/[email protected]
+Go
+go get github.com/neo4j/ontology-graph-spec/[email protected]
+Each platform’s page lists its requirements.
+Get a model
+Save the model from the format getting started guide as movies.json:
+{
+  "schema": "https://neo4j.com/docs/ontology-graph-spec/1.0.0/schema.json",
+  "version": "1.0.0",
+  "id": "movies",
+  "name": "Movies",
+  "description": "People and the movies they act in.",
+  "nodes": {
+    "person": {
+      "label": "Person",
+      "description": "A person who acts in movies.",
+      "aliases": ["Actor", "Performer"],
+      "properties": {
+        "name": { "type": "STRING", "description": "The person's full name.", "must_exist": true }
+      }
+    },
+    "movie": {
+      "label": "Movie",
+      "description": "A film released to the public.",
+      "aliases": ["Film"],
+      "properties": {
+        "title": { "type": "STRING", "description": "The title the movie was released under.", "unique": true }
+      }
+    }
+  },
+  "relationships": {
+    "acted-in": {
+      "type": "ACTED_IN",
+      "description": "The person appeared in the movie as a cast member.",
+      "from": { "node": "person" },
+      "to": { "node": "movie" },
+      "properties": {
+        "role": { "type": "STRING", "description": "The character the person played." }
+      }
+    }
+  }
+}
+Load and validate the model
+Validation returns a list of issues, which is empty when the model has no problems.
+Kotlin
+import java.io.File
+import org.neo4j.spec.graph.GraphSpec
+import org.neo4j.spec.graph.validate.Validations
+fun main() {
+    val model = GraphSpec.Json.decodeFromString(File("movies.json").readText())
+    val issues = model.validate(Validations.core)
+    if (issues.isEmpty()) {
+        println("No issues found")
+    }
+    for (issue in issues) {
+        println("${issue.code} at ${issue.path}: ${issue.message}")
+    }
+}
+Java
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import org.neo4j.spec.graph.GraphSpec;
+import org.neo4j.spec.graph.model.GraphModel;
+import org.neo4j.spec.graph.model.Type;
+import org.neo4j.spec.graph.validate.Issue;
+import org.neo4j.spec.graph.validate.Validations;
+public class GettingStarted {
+    public static void main(String[] args) throws Exception {
+        String content = Files.readString(Path.of("movies.json"));
+        GraphModel model = GraphSpec.Json.INSTANCE.decodeFromString(content, Type.GRAPH_SPEC);
+        List<Issue> issues = model.validate(Validations.Companion.getCore());
+        if (issues.isEmpty()) {
+            System.out.println("No issues found");
+        }
+        for (Issue issue : issues) {
+            System.out.println(issue.getCode() + " at " + issue.getPath() + ": " + issue.getMessage());
+        }
+    }
+}
+TypeScript
+import { readFileSync } from "node:fs";
+import { GraphModel, GraphSpec, Validations } from "@neo4j/ontology-graph-spec";
+const model = GraphSpec.Json.decodeFromString(readFileSync("movies.json", "utf8"));
+const issues = GraphModel.validate(model, Validations.core).asJsReadonlyArrayView();
+if (issues.length === 0) {
+  console.log("No issues found");
+}
+for (const issue of issues) {
+  console.log(`${issue.code} at ${issue.path}: ${issue.message}`);
+}
+Go
+package main
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"github.com/neo4j/ontology-graph-spec/go/model"
+	"github.com/neo4j/ontology-graph-spec/go/validation"
+)
+func main() {
+	content, err := os.ReadFile("movies.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var graph model.GraphModel
+	if err := json.Unmarshal(content, &graph); err != nil {
+		log.Fatal(err)
+	}
+	issues, err := validation.Validate(graph, validation.SetCore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(issues) == 0 {
+		fmt.Println("No issues found")
+	}
+	for _, issue := range issues {
+		fmt.Printf("%s at %s: %s\n", issue.Code, issue.Path, issue.Message)
+	}
+}
+Running it prints:
+No issues found
+  Libraries
+  JVM

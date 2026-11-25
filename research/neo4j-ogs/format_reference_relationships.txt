@@ -1,0 +1,91 @@
+
+  Relationships
+A relationship describes how entities in the domain relate. Relationships are listed under relationships, keyed by
+relationship id.
+relationships:
+  acted-in:
+    type: ACTED_IN
+    description: The person appeared in the movie as a cast member.
+    from:
+      node: person
+    to:
+      node: movie
+      min_count: 1
+    properties:
+      role:
+        type: STRING
+Relationship
+A relationship of the graph.
+ | 
+ | Field
+ | Type
+ | Required
+ | Description
+ | type
+ | string
+ | Yes
+ | Type of the relationship.
+ | from
+ | relationship end
+ | Yes
+ | The node the relationship starts at.
+ | to
+ | relationship end
+ | Yes
+ | The node the relationship ends at.
+ | properties
+ | map of property
+ | No
+ | Properties of the relationship keyed
+by id.
+ | constraints
+ | map of relationship constraint
+ | No
+ | Constraints on the relationship keyed by id.
+ | extensions
+ | relationship extensions
+ | No
+ | Extensions for
+the relationship.
+ | description
+ | string
+ | No
+ | Description of the relationship.
+ | aliases
+ | list of strings
+ | No
+ | Alternative names for the relationship.
+ | reference
+ | string
+ | No
+ | Reference or URI of an external resource describing the relationship.
+Relationship end
+One end of a relationship.
+ | 
+ | Field
+ | Type
+ | Required
+ | Description
+ | node
+ | string
+ | No
+ | Id of the node at this end.
+ | label
+ | string
+ | No
+ | Label of the node at this end.
+ | count
+ | integer
+ | No
+ | Exact number of relationships per node at this end. Null when unconstrained.
+ | min_count
+ | integer
+ | No
+ | Minimum number of relationships per node at this end.
+ | max_count
+ | integer
+ | No
+ | Maximum number of relationships per node at this end.
+A relationship end sets either count, or min_count and max_count.
+  Nodes
+  Properties

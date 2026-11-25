@@ -1,0 +1,47 @@
+
+  Validation
+Validation checks a model against a list of validators and returns the issues found, which is empty when the model has
+no problems.
+Validator sets
+ | 
+ | Set
+ | Use
+ | Core
+ | Checking a model is valid, that it follows the rules of the format.
+ | Labelled
+ | Checking a model is complete enough to work with, with an identifier label on every node and a type on every
+relationship.
+ | Consistent Schema
+ | Checking a model’s properties, indexes and constraints can be created in Neo4j, so names are set
+and unique and definitions don’t conflict.
+ | Mappable
+ | Checking a model’s data source mappings can be used to import data, so every node mapping has a key and
+mappings and table columns are complete.
+ | Well Constrained
+ | Reviewing a model’s design against recommended practice, such as every node having properties and a
+constraint.
+ | All
+ | Running every built-in check.
+Combine sets to check a model against more than one, such as Core and Labelled.
+A validator can depend on others, and only runs when they found no issues. This avoids a cascade of issues from a single
+mistake, but means fixing an issue can reveal new ones.
+Issues
+ | 
+ | Field
+ | Description
+ | code
+ | A stable identifier for the kind of issue, such as missing_relation_to_node.
+ | message
+ | A human-readable description.
+ | path
+ | Where the issue is, as a dot-separated path such as relationships.acted-in.to.film. Optional.
+ | details
+ | Extra information as string keys and values. Often empty.
+Custom checks
+For validation beyond the standard sets, custom checks can be written against the model in your own code.
+ | 
+ | 
+On the JVM, implement the Validation interface and pass it to validate alongside a built-in set, so your checks
+run as part of validation.
+  Go
+  Migration

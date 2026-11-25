@@ -1,0 +1,18 @@
+
+  JavaScript and TypeScript
+The package is an ES module with TypeScript definitions.
+Install
+npm install @neo4j/[email protected]
+Read and write models
+GraphSpec.Json and GraphSpec.Yaml read and write models. Reading expands any shorthand.
+import { GraphSpec } from "@neo4j/ontology-graph-spec";
+const model = GraphSpec.Yaml.decodeFromString(yaml);
+const json = GraphSpec.Json.encodeToString(model);
+Lists and maps in the model are Kotlin collections. Convert them with asJsReadonlyArrayView() and
+asJsReadonlyMapView(), for example model.nodes.asJsReadonlyMapView().
+Validate models
+import { GraphModel, Validations } from "@neo4j/ontology-graph-spec";
+const issues = GraphModel.validate(model, Validations.core).asJsReadonlyArrayView();
+See Validation for the validator sets and issues.
+  JVM
+  Go

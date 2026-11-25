@@ -1,0 +1,91 @@
+
+  Properties
+A property describes an attribute of an entity or relationship. Properties are listed under the properties of a node
+or relationship, keyed by property id. must_exist, unique and key are shorthand for
+constraints.
+properties:
+  title:
+    type: STRING
+    description: The title the movie was released under.
+    unique: true
+  genre:
+    type: STRING
+    one_of: [DRAMA, COMEDY, THRILLER]
+Property
+A property of a node or relationship.
+ | 
+ | Field
+ | Type
+ | Required
+ | Description
+ | type
+ | type
+ | No
+ | Neo4j type of the property.
+ | dimension
+ | integer
+ | No
+ | Dimension of the property when it holds a vector.
+ | must_exist
+ | boolean
+ | No
+ | Shorthand for an existence constraint. Expanded into constraints when the model is
+decoded.
+ | unique
+ | boolean
+ | No
+ | Shorthand for a uniqueness constraint. Expanded into constraints when the model is decoded.
+ | key
+ | boolean
+ | No
+ | Shorthand for a key constraint. Expanded into constraints when the model is decoded.
+ | extensions
+ | custom data
+ | No
+ | Extensions for the property.
+ | name
+ | string
+ | No
+ | Name of the property in the database, when different from its id.
+ | description
+ | string
+ | No
+ | Description of the property.
+ | aliases
+ | list of strings
+ | No
+ | Alternative names for the property.
+ | reference
+ | string
+ | No
+ | Reference or URI of an external resource describing the property.
+ | pattern
+ | string
+ | No
+ | Pattern values of the property are expected to match.
+ | one_of
+ | list of strings
+ | No
+ | Values the property is restricted to.
+Types
+Each type except UUID and the VECTOR types also has a list form, such as LIST<STRING>.
+ | 
+ | Kind
+ | Types
+ | Text
+ | STRING
+ | Numbers
+ | INTEGER, INTEGER32, INTEGER16, INTEGER8, FLOAT, FLOAT32
+ | Boolean
+ | BOOLEAN
+ | Temporal
+ | DATE, LOCAL TIME, ZONED TIME, LOCAL DATETIME, ZONED DATETIME, DURATION
+ | Spatial
+ | POINT
+ | Vectors
+ | VECTOR<FLOAT>, VECTOR<FLOAT32>, VECTOR<INTEGER>, VECTOR<INTEGER32>, VECTOR<INTEGER16>,
+VECTOR<INTEGER8>
+ | Other
+ | UUID, ANY
+  Relationships
+  Constraints and indexes

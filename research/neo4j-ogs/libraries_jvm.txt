@@ -1,0 +1,36 @@
+
+  JVM
+Requires Java 11 or later.
+Install
+Gradle
+implementation("org.neo4j.spec.graph:ontology-graph-spec:1.0.0")
+Maven
+<dependency>
+    <groupId>org.neo4j.spec.graph</groupId>
+    <artifactId>ontology-graph-spec</artifactId>
+    <version>1.0.0</version>
+</dependency>
+Read and write models
+GraphSpec.Json and GraphSpec.Yaml read and write models. Reading expands any shorthand.
+Kotlin
+import org.neo4j.spec.graph.GraphSpec
+val model = GraphSpec.Yaml.decodeFromString(yaml)
+val json = GraphSpec.Json.encodeToString(model)
+Java
+import org.neo4j.spec.graph.GraphSpec;
+import org.neo4j.spec.graph.model.GraphModel;
+import org.neo4j.spec.graph.model.Type;
+import org.neo4j.spec.graph.model.Version;
+GraphModel model = GraphSpec.Yaml.INSTANCE.decodeFromString(yaml, Type.GRAPH_SPEC);
+String json = GraphSpec.Json.INSTANCE.encodeToString(model, Type.GRAPH_SPEC, Version.LATEST);
+Validate models
+Kotlin
+import org.neo4j.spec.graph.validate.Validations
+val issues = model.validate(Validations.core)
+Java
+import org.neo4j.spec.graph.validate.Issue;
+import org.neo4j.spec.graph.validate.Validations;
+List<Issue> issues = model.validate(Validations.Companion.getCore());
+See Validation for the validator sets and issues.
+  Getting started
+  JavaScript and TypeScript

@@ -1,0 +1,201 @@
+
+  Interoperability
+The format covers the parts of RDFS and SHACL that describe a domain, not all of either. It is not RDF, not OWL: no
+triples, no IRIs, no inference. It is descriptive first: a model says what a domain looks like. Only part of what it
+says is enforced in the database.
+The coverage tables name fields from the Properties,
+Relationships, Constraints and indexes and
+Extensions pages. Constructs with no native field travel in custom data. Each row
+gets one of these verdicts:
+covered: maps to native fields.
+partially covered: maps, with limits.
+lossy: maps, but drops meaning.
+carried: no native field. Travels in custom data.
+different mechanism: met another way.
+excluded: deliberately out.
+n/a: not a construct of that vocabulary.
+RDFS coverage
+ | 
+ | Construct
+ | Mapping
+ | Verdict
+ | rdfs:Class
+ | A node. Its labels carry the class: identifier names it. implied and
+optional add further labels. The label shorthand expands into labels when the model is decoded.
+ | covered
+ | rdf:Property
+ | A relationship when its range is a class, a
+property when its range is a datatype. Nothing records which it came from: a
+tool importing RDF decides. A property with several domains or ranges becomes one relationship entry per pair of
+ends. RDFS joins them conjunctively. The per-pair entries do not carry that: the combination survives as the
+identifier and implied labels of one node.
+ | covered
+ | rdfs:domain / rdfs:range
+ | The from and to ends of a relationship. A
+property’s range via its type. Types are Neo4j types, not xsd datatypes: a tool
+importing RDF maps them.
+ | covered
+ | rdfs:label
+ | aliases on a node,
+relationship or property. A property
+also has name (its name in the database when different from its id). A node has no name field.
+ | covered
+ | rdfs:comment
+ | description on the model, a node, a relationship or a property: one string each, capped as the
+length rules set out.
+ | covered
+ | rdfs:seeAlso, rdfs:isDefinedBy
+ | reference on a node,
+relationship or property: one URI
+each. Further values ride custom data.
+ | partially covered
+ | rdfs:subClassOf
+ | No hierarchy to traverse: a tool importing RDF flattens it into the implied labels of a
+node. implied and optional are plain labels. Nothing infers over them.
+ | covered
+ | rdfs:subPropertyOf
+ | No field on a node, relationship or property. Property hierarchies are excluded.
+ | excluded
+ | containers (Bag/Seq/Alt), reification
+ | No field. The list types, such as
+LIST<STRING>, are ordered lists, not RDF containers. Reification has no carrier.
+ | excluded
+ | cardinality, enums, patterns
+ | Not RDFS constructs, but native here: count,
+min_count and max_count on a
+relationship end. one_of and pattern on
+a property.
+ | n/a
+SHACL coverage
+ | 
+ | Construct
+ | Mapping
+ | Verdict
+ | sh:datatype
+ | The type of a property, a Neo4j type rather than an xsd
+datatype. VECTOR types pair with dimension, and ANY opts the property out. Enforceable as a PROPERTY_TYPE
+constraint.
+ | covered
+ | sh:in
+ | one_of on a property of a node or relationship: a list of strings, so
+non-string literals must be quoted. Mutually exclusive with pattern. SHACL allows both together.
+ | partially covered
+ | sh:pattern
+ | pattern on a property: a single regex string, with flags such
+as (?i) folded into it. Mutually exclusive with one_of. Descriptive, not enforced.
+ | covered
+ | sh:minCount = 1 on property
+ | must_exist on a property: shorthand for an
+EXISTS constraint, expanded when the model is decoded. Enforceable via the database schema. A minimum above 1 has
+no native field.
+ | covered
+ | sh:minCount/sh:maxCount on relationship
+ | count alone, or
+min_count with max_count, on a
+relationship end. Descriptive: not yet enforced in the database.
+ | covered
+ | sh:maxCount > 1 on property
+ | A list type, such as LIST<STRING>, or
+LIST<ANY> for mixed elements. Gives a list, not a bound on length. Element types are always scalars.
+ | lossy
+ | sh:class
+ | The node or label of a relationship end, pointing at a
+node whose identifier label is the class. A relationship is its type and two ends:
+the same type between other nodes is a separate entry.
+ | covered
+ | sh:nodeKind
+ | The shape of the model itself: literals live under properties, node references only as relationship
+ends. IRIs collapse into relationships and labels, literals into property types. Nothing distinguishes an IRI from a
+blank node: blank nodes have no carrier.
+ | lossy
+ | sh:name, sh:description
+ | description on a node, relationship or property. The only name fields are a
+property’s (its name in the database when different from its id) and the model’s own. No display name for a node or
+relationship.
+ | lossy
+ | sh:message, sh:severity
+ | No native field. Rides custom data. The format
+has no severity concept.
+ | lossy
+ | sh:minInclusive/maxExclusive etc. (value ranges)
+ | No native field on a property: only pattern and
+one_of restrict values. Rides custom data. See Gaps and caveats.
+ | carried
+ | sh:minLength/maxLength
+ | No native field on a property. Rides custom
+data. Not the length caps on the rules page: those bound the model’s own name and
+description, not property values. See Gaps and caveats.
+ | carried
+ | sh:languageIn, sh:uniqueLang
+ | No native field. Rides custom data.
+Property values carry no language tags.
+ | carried
+ | sh:equals, sh:disjoint, sh:lessThan (property-pair comparisons)
+ | No native field. Rides
+custom data. See Gaps and caveats.
+ | carried
+ | sh:hasValue
+ | No dedicated field. Rides custom data. Approximate it with
+one_of plus must_exist: a single value, strings only, and it forces presence.
+ | carried
+ | sh:closed, sh:ignoredProperties
+ | No native field. Rides custom data.
+Neo4j is schema-optional: a closed world is enforcement policy, not ontology content.
+ | carried
+ | sh:order, sh:group
+ | No native field. Rides custom data. The
+nearest native field to styling is a node’s display.
+ | carried
+ | property paths (inverse)
+ | No field of its own: the from and to ends of a
+relationship entry express them by direction.
+ | different mechanism
+ | property paths (alternative/sequence)
+ | Not constraints in this format. Anything beyond a single hop rides
+custom data.
+ | carried
+ | sh:not/and/or/xone, qualified cardinality
+ | No boolean composition: the
+constraint types are only EXISTS, UNIQUE, KEY and
+PROPERTY_TYPE.
+ | excluded
+ | SHACL-SPARQL constraints
+ | No SPARQL machinery. Raw text at best in custom
+data.
+ | excluded
+ | SHACL-AF rules/functions
+ | No field on the model, deliberately: rules and functions imply inference, which the
+format does not do.
+ | excluded
+Enforcement
+A model is descriptive first. The libraries validate the model document itself, not
+the data in the database. The database enforces only what its schema can carry.
+Enforced in the database:
+The identifier label of a node and the type of a relationship: they select what the constraints apply to. The
+implied and optional labels are descriptive.
+must_exist, unique and key on a property, and the
+constraints of a node or relationship: the four constraint types,
+EXISTS, UNIQUE, KEY and PROPERTY_TYPE.
+Descriptive, not enforced:
+The from and to ends of a relationship and their count, min_count
+and max_count.
+one_of and pattern on a property.
+name, description, aliases, reference and dimension.
+extensions, and the custom data in them.
+Gaps and caveats
+Gaps, likeliest to matter first:
+Value ranges: sh:minInclusive, sh:maxExclusive and the rest. Plausible in regulated industries (ingredient
+classes, dosage ranges). No native field on a property. The route is an owner-defined validation object in
+custom data.
+String lengths: sh:minLength and sh:maxLength. Cheap to add on the same validation object. Nothing on a
+property today. Not the length caps on the rules page: those bound the model’s own name and
+description, not property values.
+Property-pair comparisons: sh:equals, sh:disjoint, sh:lessThan. Rare in practice. The same route through
+custom data.
+Caveats:
+SHACL validates instance data after loading it. This format is descriptive first, enforced via the database schema
+where possible. Validation checks the model document, not the data.
+SHACL binds shapes to data with targets such as sh:targetClass. Here the binding is identity: a
+node entry is the shape for its identifier label. No target machinery.
+  Versioning
+  Libraries

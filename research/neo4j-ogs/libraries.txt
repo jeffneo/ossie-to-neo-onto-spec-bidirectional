@@ -1,0 +1,10 @@
+
+  Libraries
+The libraries read, write, validate and migrate models, for tools that work with the format:
+JVM for Kotlin, Java and other JVM languages
+JavaScript and TypeScript
+Go
+All three are built from the same Kotlin code, so validation and migration behave the same on every platform. To try
+one, see Getting started.
+  Interoperability
+  Getting started

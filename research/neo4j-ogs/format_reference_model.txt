@@ -1,0 +1,52 @@
+
+  Model
+A model document is a YAML or JSON object. The JSON Schema at
+https://neo4j.com/docs/ontology-graph-spec/1.1.0/schema.json is the normative definition of the format, and fields it
+doesn’t define are not allowed.
+ | 
+ | Field
+ | Type
+ | Required
+ | Description
+ | schema
+ | string
+ | Yes
+ | Schema specification uri used.
+ | version
+ | string
+ | Yes
+ | User-defined version of this model document, e.g. a revision number or label.
+ | id
+ | string
+ | Yes
+ | Unique identifier of the model, typically a kebab-case version of the name, used for
+referencing.
+ | name
+ | string
+ | No
+ | Human readable name for the model.
+ | description
+ | string
+ | No
+ | Description of the model.
+ | nodes
+ | map of node
+ | No
+ | Node definitions keyed by node id.
+ | relationships
+ | map of relationship
+ | No
+ | Relationship definitions
+keyed by relationship id.
+ | extensions
+ | model extensions
+ | No
+ | Extensions to the model: data
+source tables, mappings and external custom data.
+See Versioning for how schema and version relate.
+Ids
+Nodes, relationships, properties, constraints and indexes are keyed by ids, which other parts of the document use to
+refer to them. Ids are separate from the labels, types and names used in the graph, so a label can be renamed without
+breaking references to it. For the same reason, ids should rarely change.
+  Concepts
+  Nodes

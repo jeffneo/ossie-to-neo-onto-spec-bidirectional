@@ -1,0 +1,17 @@
+
+  Versioning
+A model document carries two versions, which mean different things.
+ | 
+ | Field
+ | Meaning
+ | schema
+ | The version of the specification the document follows, identified by the URL of that version’s JSON Schema.
+For example, https://neo4j.com/docs/ontology-graph-spec/1.0.0/schema.json for version 1.0.0.
+ | version
+ | The author’s own version of the model, such as a revision number or label. The specification doesn’t
+interpret it.
+Each version of the specification publishes its JSON Schema at its own URL:
+https://neo4j.com/docs/ontology-graph-spec/<version>/schema.json
+1.0.0 is the first version of the specification. 1.1.0 adds the optional aliases property to properties.
+  Rules
+  Interoperability

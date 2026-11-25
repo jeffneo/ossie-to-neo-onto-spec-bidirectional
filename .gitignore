@@ -1,0 +1,5 @@
+# Upstream git clones (reference only; see research/README.md for pinned commits)
+research/ossie/
+research/ossie-converters/
+
+.DS_Store
