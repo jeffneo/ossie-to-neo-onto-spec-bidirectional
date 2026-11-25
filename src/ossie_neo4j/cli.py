@@ -7,6 +7,8 @@ Commands:
   validate   validate documents of any kind
   normalize  print a document's normalized (canonical) form
   migrate    migrate an Ossie 0.1.1 (OSI) document to 0.3.0.dev0
+  import     OGS ➜ Ossie semantic model (the apache/ossie-converters interop contract)
+  export     Ossie semantic model ➜ OGS, deriving the graph (interop contract)
 
 Exit codes: 0 success, 1 invalid input or usage error, 2 lossy result under --strict.
 """
@@ -100,6 +102,17 @@ def _parser() -> argparse.ArgumentParser:
     _output_args(m, multi=True)
     m.add_argument("-v", "--verbose", action="store_true", help="also print info messages")
     m.set_defaults(run=_cmd_migrate)
+
+    # The apache/ossie-converters interop contract: `import -i native -o ossie` and
+    # `export -i ossie -o native`, where the Ossie side is one core semantic model document.
+    i = sub.add_parser("import", help="OGS ➜ Ossie semantic model (interop contract)")
+    i.add_argument("-i", "--input", required=True)
+    i.add_argument("-o", "--output", required=True)
+    i.set_defaults(run=_cmd_import)
+    e = sub.add_parser("export", help="Ossie semantic model ➜ OGS with a derived graph")
+    e.add_argument("-i", "--input", required=True)
+    e.add_argument("-o", "--output", required=True)
+    e.set_defaults(run=_cmd_export)
     return parser
 
 
@@ -243,6 +256,30 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     for d in docs:
         if not _write({DocumentKind.OSSIE_SEMANTIC_MODEL: d}, args, kebab(d["name"])):
             return 1
+    return 0
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    try:
+        result = to_ossie(args.input)
+    except ConversionError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    sm = result.documents.get(DocumentKind.OSSIE_SEMANTIC_MODEL)
+    if sm is None:
+        print("error: the OGS model has no data_source_tables to import", file=sys.stderr)
+        return 1
+    dump(sm, args.output)
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    try:
+        result = to_neo4j(args.input, derive_graph=True)
+    except ConversionError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    dump(result.output, args.output)
     return 0
 
 

@@ -12,3 +12,6 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+
+# Staged upstream contributions (git worktrees of the research clones)
+upstream/work/

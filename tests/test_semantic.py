@@ -1,4 +1,4 @@
-"""Phase 2: OGS data_source_tables ⇄ Ossie semantic model."""
+"""OGS data_source_tables ⇄ Ossie semantic model."""
 
 from __future__ import annotations
 
@@ -246,7 +246,9 @@ def test_field_name_differs_from_column_and_dialect_only_fields():
                     {"name": "order_id", "expression": {"sql": "ORDER_NO"}, "datatype": "Integer"},
                     {
                         "name": "total",
-                        "expression": {"dialects": [{"dialect": "SNOWFLAKE", "expression": "x"}]},
+                        "expression": {
+                            "dialects": [{"dialect": "SNOWFLAKE", "expression": "X::INT"}]
+                        },
                     },
                     {"name": "opaque", "expression": {"sql": "blob"}, "datatype": "Opaque"},
                 ],
@@ -259,6 +261,37 @@ def test_field_name_differs_from_column_and_dialect_only_fields():
     assert table["columns"][0]["custom"]["ossie"]["name"] == "order_id"
     assert table["primary_keys"] == ["ORDER_NO"]
     assert table["columns"][1].get("suggested") is None
+    assert _normalized(to_ossie(result.output).output) == _normalized(sm)
+
+
+def test_ansi_sql_dialect_columns_are_columns():
+    """dbt writes every field as an ANSI_SQL dialect expression rather than portable `sql`."""
+    ansi = {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]}
+    mixed = {
+        "dialects": [
+            {"dialect": "ANSI_SQL", "expression": "status"},
+            {"dialect": "SNOWFLAKE", "expression": "STATUS::VARCHAR"},
+        ]
+    }
+    sm = {
+        "version": "0.3.0.dev0",
+        "name": "m",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "s.orders",
+                "fields": [
+                    {"name": "order_amount", "expression": ansi},
+                    {"name": "status", "expression": mixed},
+                ],
+            }
+        ],
+    }
+    result = to_neo4j(sm)
+    table = result.output["extensions"]["data_source_tables"]["orders"]
+    assert [c["name"] for c in table["columns"]] == ["amount", "status"]
+    assert table["columns"][0]["custom"]["ossie"]["expression"] == ansi
+    assert "derived_field" not in result.report.codes()
     assert _normalized(to_ossie(result.output).output) == _normalized(sm)
 
 

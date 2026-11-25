@@ -2,7 +2,7 @@
 
 A converter that translates in both directions between the **Neo4j Ontology Graph Spec** (OGS) and **Apache Ossie** (incubating; formerly Open Semantic Interchange, OSI).
 
-> Status: **phase 4 done**. One OGS document converts to and from the full set of three Ossie documents: *ontology*, *semantic model* and *mapping*. Ossie 0.1.1 (OSI) input is migrated on read. A semantic model on its own can be turned into a full graph (core-only mode). Every fixture round-trips losslessly, and each conversion produces a loss report. Next is phase 5: contributing upstream. See [Development](#development) and [CLI](#4-cli).
+> Status: **phase 5 staged**. The converter is complete (phases 0–4). The upstream contribution to Apache Ossie is prepared and verified locally, but nothing is pushed or sent: the converter for `apache/ossie-converters`, the `NEO4J` vendor token for `apache/ossie`, and drafts of the dev@ email and both PRs. See [`upstream/README.md`](upstream/README.md) for what's staged, what was verified, and the decisions left before publishing.
 
 ## 1. The two formats at a glance
 
@@ -201,7 +201,9 @@ Package layout (`src/ossie_neo4j/`):
 | `convert/derive.py` | Core-only mode: synthesizes an ontology and a mapping from a semantic model on its own (§3.4). |
 | `ossie/migrate.py` | Ossie 0.1.1 → 0.3.0.dev0 migration, applied on read (§3.5). |
 | `convert/__init__.py` | Public API: `to_ossie(ogs)` gives up to three documents (ontology, semantic model, mapping); `to_neo4j(ontology_or_sm, semantic_model=..., mapping=...)` gives one OGS document. Each validates the inputs, converts them, re-validates the outputs, and returns `Conversion.documents` with a loss report. `to_neo4j` warns if the mapping's `*_ref` names don't match the documents given. |
-| `cli.py` | `ossie-neo4j convert`, `to-ossie`, `to-neo4j`, `validate`, `normalize` and `migrate`. |
+| `cli.py` | `ossie-neo4j convert`, `to-ossie`, `to-neo4j`, `validate`, `normalize`, `migrate`, and the ossie-converters interop contract (`import -i/-o`, `export -i/-o`). |
+| `vendor.py` | The `NEO4J` validator, registered under the `ossie.vendor_validators` entry point, so apache/ossie's `validate.py --vendor NEO4J` checks our payloads. |
+| `scripts/stage_upstream.py` | Rebuilds the upstream contribution branches as local worktrees under `upstream/work/` (§ phase 5). |
 
 ## 4. CLI
 
@@ -263,6 +265,10 @@ Flags:
 
 Exit codes: `0` success, `1` invalid input or usage error, `2` lossy result under `--strict`.
 
+For the apache/ossie-converters interop matrix:
+- `ossie-neo4j import -i model.ogs.yaml -o model.ossie.yaml` writes the semantic model only;
+- `ossie-neo4j export -i model.ossie.yaml -o model.ogs.yaml` derives the graph.
+
 ## 5. Testing strategy
 
 - **Fixtures:**
@@ -291,7 +297,7 @@ Exit codes: `0` success, `1` invalid input or usage error, `2` lossy result unde
 | 2 ✅ | OGS tables ↔ Ossie semantic model (datasets, fields, keys, FK relationships, metrics stash) |
 | 3 ✅ | OGS mappings ↔ Ossie mapping document |
 | 4 ✅ | Core-only mode, Ossie 0.1.1 → 0.3.0 migration on input, CLI polish |
-| 5 | Upstream: contribute to `apache/ossie-converters`, and propose the `NEO4J` vendor token |
+| 5 🟡 | Upstream: contribute to `apache/ossie-converters`, and propose the `NEO4J` vendor token. Staged and verified locally; publishing awaits approval ([`upstream/`](upstream/README.md)) |
 
 ## References
 

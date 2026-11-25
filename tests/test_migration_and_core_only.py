@@ -1,4 +1,4 @@
-"""Phase 4: Ossie 0.1.1 input, core-only mode, and the polished CLI."""
+"""Ossie 0.1.1 input, core-only mode, and the CLI."""
 
 from __future__ import annotations
 

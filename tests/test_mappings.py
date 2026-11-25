@@ -1,4 +1,4 @@
-"""Phase 3: OGS data_source_mappings ⇄ Ossie mapping document."""
+"""OGS data_source_mappings ⇄ Ossie mapping document."""
 
 from __future__ import annotations
 

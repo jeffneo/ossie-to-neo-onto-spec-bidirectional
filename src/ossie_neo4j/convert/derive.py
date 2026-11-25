@@ -27,8 +27,9 @@ from typing import Any
 
 from ..ossie.models import BUILTIN_CONCEPTS, SPEC_VERSION, SemanticModel
 from .mappings import column_ref
-from .naming import parse_identifier, pascal, phrase, snake, unique
+from .naming import pascal, phrase, snake, unique
 from .report import Loss, LossReport
+from .semantic import field_column
 from .types import ALL_GENERATED
 
 _ROLE_FOR_DATATYPE = {
@@ -71,11 +72,7 @@ def derive_ontology_and_mapping(
     for ds in sm.datasets:
         c = concept_of[_fold(ds.name)]
         path = f"datasets.{ds.name}"
-        columns = {
-            _fold(f.name): f.name
-            for f in ds.fields or []
-            if not f.expression.dialects and parse_identifier(f.expression.sql)
-        }
+        columns = {_fold(f.name): f.name for f in ds.fields or [] if field_column(f.expression)}
         pk = [columns.get(_fold(k)) for k in ds.primary_key or []]
         if ds.primary_key and None in pk:
             report.add(

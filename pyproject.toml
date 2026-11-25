@@ -19,6 +19,9 @@ dependencies = [
 [project.scripts]
 ossie-neo4j = "ossie_neo4j.cli:main"
 
+[project.entry-points."ossie.vendor_validators"]
+NEO4J = "ossie_neo4j.vendor:check"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

@@ -78,6 +78,24 @@ def _without_ossie(custom: dict | None) -> dict:
     return {k: v for k, v in (custom or {}).items() if k != OSSIE}
 
 
+def field_column(expression: Any) -> str | None:
+    """The source column a field reads, if its expression is a plain column reference.
+
+    The portable ``sql`` is used if present. Otherwise the ``ANSI_SQL`` dialect is used,
+    following the converter guidance in apache/ossie-converters ("fall back to ANSI_SQL"), or
+    any dialect when there's no ANSI_SQL one. The chosen dialect entries must all name the same
+    plain identifier. dbt, for one, writes every field this way
+    (``dialects: [{dialect: ANSI_SQL, expression: amount}]``).
+    """
+    e = expression if isinstance(expression, dict) else ossie_dict(expression)
+    if e.get("sql") is not None:
+        return parse_identifier(e["sql"])
+    dialects = e.get("dialects") or []
+    chosen = [d for d in dialects if d.get("dialect") == "ANSI_SQL"] or dialects
+    names = {parse_identifier(d.get("expression")) for d in chosen}
+    return names.pop() if len(names) == 1 and None not in names else None
+
+
 def _derived_datatype(suggested: str | None, source_type: str | None) -> str | None:
     """The field datatype OGS ➜ Ossie derives from a column."""
     return datatype_for(suggested) if suggested else datatype_from_source(source_type)
@@ -179,7 +197,11 @@ class _TablesToOssie:
             col_field[cname] = fname
             suggested = col.suggested.value if col.suggested else None
 
-            f: dict[str, Any] = {"name": fname, "expression": {"sql": sql_identifier(cname)}}
+            # The original expression comes back if it still reads this column (e.g. a dbt
+            # ANSI_SQL dialect expression); otherwise the column as portable `sql`.
+            kept = cos.get("expression")
+            expr = kept if kept and field_column(kept) == cname else {"sql": sql_identifier(cname)}
+            f: dict[str, Any] = {"name": fname, "expression": expr}
             for k in ("dimension", "label", "description"):
                 if k in cos:
                     f[k] = cos[k]
@@ -510,7 +532,7 @@ class _SemanticToTables:
             fd = dd["fields"][i]
             fpath = f"{path}.fields.{f.name}"
             field_name[_fold(f.name)] = f.name
-            col_name = None if f.expression.dialects else parse_identifier(f.expression.sql)
+            col_name = field_column(fd["expression"])
             if col_name is None or _fold(col_name) in used:
                 derived.append({"index": i, "field": fd})
                 self.r.add(
@@ -556,6 +578,8 @@ class _SemanticToTables:
             cos: dict[str, Any] = {}
             if f.name != col_name:
                 cos["name"] = f.name
+            if fd["expression"] != {"sql": sql_identifier(col_name)}:
+                cos["expression"] = fd["expression"]
             for k in ("description", "label", "dimension", "ai_context"):
                 if k in fd:
                     cos[k] = fd[k]
