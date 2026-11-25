@@ -2,7 +2,7 @@
 
 A converter that translates in both directions between the **Neo4j Ontology Graph Spec** (OGS) and **Apache Ossie** (incubating; formerly Open Semantic Interchange, OSI).
 
-> Status: design / approach. No code yet.
+> Status: **phase 0 done**. The scaffold, pinned schemas, models, fixtures, normalizers and validation rules are in place. Conversion starts in phase 1. See [Development](#development).
 
 ## 1. The two formats at a glance
 
@@ -84,7 +84,7 @@ The converter therefore treats **OGS ↔ Ossie ontology** as its main axis. Tabl
   - If exactly two roles are entities, the entity roles become `from`/`to` and the value roles become relationship properties.
   - Otherwise the relationship is **reified** as an intermediate node with one relationship per role. This is reported as approximated.
 - `extends` → `labels.implied`, flattened transitively, because OGS does not support inheritance.
-- `identify_by` → `KEY` constraint over the corresponding properties.
+- `identify_by` → `KEY` constraint over the corresponding properties. `identify_by` may name a relationship *inherited* from a supertype: in the upstream SAP example, `Customer` is identified by `BusinessPartner.nr`. The KEY therefore goes on the subtype node, over a property copied down from the supertype.
 - `derived_by`, `requires`, and unary relationships → stashed in `extensions.custom.ossie` and reported. OGS has no equivalent.
 
 ### 3.2 Physical layer: OGS tables ↔ Ossie semantic model
@@ -120,7 +120,38 @@ Many Ossie producers (dbt, Snowflake, etc.) emit **only a semantic model**, with
 
 In the reverse direction, `--target semantic-model` emits only the core document, for consumers that don't read the ontology layer.
 
-## 4. CLI (planned)
+## Development
+
+```bash
+uv sync
+```
+
+```bash
+uv run pytest
+```
+
+```bash
+uv run ossie-neo4j validate tests/fixtures/ogs/movies.yaml tests/fixtures/ossie/flights.ontology.yaml
+```
+
+```bash
+uv run ossie-neo4j normalize tests/fixtures/ogs/movies.yaml
+```
+
+Package layout (`src/ossie_neo4j/`):
+
+| Module | What it does |
+|---|---|
+| `io.py` | Loads and dumps YAML/JSON. Works out which of the four document kinds a document is from its root keys. |
+| `schemas/` | Vendored, pinned JSON Schemas (OGS 1.1.0; Ossie 0.3.0.dev0 at commit `6792db4`) and offline validation. Ossie's cross-file `$ref`s resolve to the local copies. |
+| `ogs/models.py`, `ossie/models.py` | Pydantic models that mirror the schemas one to one (`extra="forbid"`). `ossie/models.py` is the only module that knows Ossie's shape. |
+| `ogs/normalize.py` | Expands shorthand into longhand. Its output matches the spec's longhand example exactly. |
+| `ossie/normalize.py` | Turns a string `ai_context` into an object. Expands `prefix:local` IRIs, and provides `compact_iri` for the reverse. |
+| `ogs/rules.py`, `ossie/rules.py` | The cross-reference rules that JSON Schema can't express: the OGS "Core" rules, plus Ossie name-resolution and ontology rules. |
+| `pipeline.py` | `read()`: parse ➜ schema ➜ model ➜ rules ➜ normalize. A stage runs only if the earlier stages found no errors. |
+| `cli.py` | `ossie-neo4j validate` and `ossie-neo4j normalize`. |
+
+## 4. CLI (planned for phase 1)
 
 ```bash
 ossie-neo4j to-ossie model.ogs.yaml --out ./out/

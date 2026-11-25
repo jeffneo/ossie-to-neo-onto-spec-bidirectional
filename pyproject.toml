@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ossie-neo4j"
+version = "0.0.1.dev0"
+description = "Bidirectional converter between the Neo4j Ontology Graph Spec and Apache Ossie"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "jsonschema>=4.18",
+    "referencing>=0.30",
+]
+
+[project.scripts]
+ossie-neo4j = "ossie_neo4j.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ossie_neo4j"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["research"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

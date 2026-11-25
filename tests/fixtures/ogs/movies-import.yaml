@@ -1,0 +1,204 @@
+# Authored fixture (not from the spec). It exercises the parts of OGS 1.1.0 that the spec's own
+# examples leave out:
+# - implied and optional labels;
+# - key and composite constraints;
+# - non-scalar types (vector, list, point, temporal);
+# - relationship counts;
+# - indexes and display;
+# - data source tables, foreign keys, and NODE / RELATIONSHIP / QUERY mappings;
+# - custom data.
+schema: "https://neo4j.com/docs/ontology-graph-spec/1.1.0/schema.json"
+version: "2.3.0"
+id: movies-import
+name: Movies (import)
+description: Movies, the people in them and their reviews, mapped from a relational source.
+nodes:
+  person:
+    label: Person
+    description: A person who works on movies.
+    aliases: [Individual]
+    reference: https://schema.org/Person
+    properties:
+      person_id:
+        type: STRING
+        key: true
+        name: personId
+        description: Stable identifier from the source system.
+      name:
+        type: STRING
+        must_exist: true
+        aliases: [full name]
+      born:
+        type: DATE
+      embedding:
+        type: VECTOR<FLOAT32>
+        dimension: 384
+    extensions:
+      indexes:
+        person-embedding:
+          type: VECTOR
+          labels: [Person]
+          properties: [embedding]
+          options:
+            type: VECTOR
+            vector.dimensions: 384
+            vector.similarity_function: cosine
+      display:
+        x: 0
+        y: 0
+        colour: "#4C8EDA"
+      custom:
+        acme:
+          owner: catalogue-team
+  actor:
+    labels:
+      identifier: Actor
+      implied: [Person]
+      optional: [Retired]
+    description: A person who acts in movies.
+    properties:
+      person_id:
+        type: STRING
+  movie:
+    label: Movie
+    description: A film released to the public.
+    properties:
+      title:
+        type: STRING
+        must_exist: true
+      released:
+        type: INTEGER
+      genres:
+        type: LIST<STRING>
+      rating:
+        type: STRING
+        one_of: [G, PG, PG-13, R, NC-17]
+      runtime:
+        type: DURATION
+      shot_at:
+        type: POINT
+      premiered_at:
+        type: ZONED DATETIME
+    constraints:
+      movie-key:
+        type: KEY
+        properties: [title, released]
+        name: movie_key
+  review:
+    label: Review
+    properties:
+      review_id:
+        type: UUID
+        unique: true
+      text:
+        type: STRING
+        pattern: "^.{1,10000}$"
+relationships:
+  acted-in:
+    type: ACTED_IN
+    description: The actor appeared in the movie as a cast member.
+    from:
+      node: actor
+    to:
+      node: movie
+      min_count: 1
+    properties:
+      roles:
+        type: LIST<STRING>
+        must_exist: true
+  directed:
+    type: DIRECTED
+    from:
+      node: person
+    to:
+      node: movie
+  reviewed:
+    type: REVIEWED
+    from:
+      node: review
+      count: 1
+    to:
+      node: movie
+      min_count: 0
+      max_count: 1000
+    properties:
+      reviewed_at:
+        type: LOCAL DATETIME
+    extensions:
+      indexes:
+        reviewed-at:
+          type: RANGE
+          properties: [reviewed_at]
+extensions:
+  data_source_tables:
+    people:
+      source: imdb.public.people
+      columns:
+        - {name: id, type: VARCHAR, suggested: STRING, nullable: false}
+        - {name: full_name, type: VARCHAR, suggested: STRING}
+        - {name: birth_date, type: DATE, suggested: DATE}
+      primary_keys: [id]
+    movies:
+      source: imdb.public.movies
+      columns:
+        - {name: title, type: VARCHAR, suggested: STRING, nullable: false}
+        - {name: year, type: INT, suggested: INTEGER, nullable: false}
+        - {name: rating, type: VARCHAR, suggested: STRING}
+      primary_keys: [title, year]
+    cast:
+      source: imdb.public.cast
+      columns:
+        - {name: person_id, type: VARCHAR, suggested: STRING}
+        - {name: title, type: VARCHAR, suggested: STRING}
+        - {name: year, type: INT, suggested: INTEGER}
+        - {name: role, type: VARCHAR, suggested: STRING}
+      foreign_keys:
+        cast-person:
+          columns: [person_id]
+          references: {table: people, columns: [id]}
+        cast-movie:
+          columns: [title, year]
+          references: {table: movies, columns: [title, year]}
+  data_source_mappings:
+    default:
+      - type: NODE
+        id: map-person
+        node: person
+        table: people
+        key: [person_id]
+        mode: MERGE
+        properties:
+          person_id: {column: id}
+          name: {column: full_name}
+          born: {column: birth_date}
+      - type: NODE
+        id: map-movie
+        node: movie
+        table: movies
+        key: [title, released]
+        properties:
+          title: {column: title}
+          released: {column: year}
+          rating: {column: rating}
+      - type: RELATIONSHIP
+        relationship: acted-in
+        table: cast
+        depends_on: map-movie
+        from_node:
+          label: Actor
+          properties:
+            person_id: {column: person_id}
+        to_node:
+          label: Movie
+          properties:
+            title: {column: title}
+            released: {column: year}
+        properties:
+          roles: {column: role}
+      - type: QUERY
+        table: cast
+        query: "MATCH (a:Person)-[:ACTED_IN]->() SET a:Actor"
+        depends_on: map-movie
+  custom:
+    acme:
+      steward: data-platform
