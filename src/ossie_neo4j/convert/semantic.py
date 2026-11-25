@@ -23,6 +23,7 @@ native data they depend on is unchanged.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..ogs.models import GraphModel, Table
@@ -35,6 +36,25 @@ from .report import Loss, LossReport
 from .types import NEO4J_FOR_DATATYPE, datatype_for, datatype_from_source
 
 VENDOR = "NEO4J"
+
+
+@dataclass
+class TableIndex:
+    """How OGS tables and columns correspond to Ossie datasets and fields.
+
+    The mapping layer (phase 3) needs this to translate ``TABLE.column`` references both ways.
+    """
+
+    dataset: dict[str, str] = field(default_factory=dict)  # table id ➜ dataset name
+    fields: dict[str, dict[str, str]] = field(default_factory=dict)  # table id ➜ column ➜ field
+
+    def table_for(self, dataset: str) -> str | None:
+        f = _fold(dataset)
+        return next((t for t, d in self.dataset.items() if _fold(d) == f), None)
+
+    def column_for(self, table: str, field_name: str) -> str | None:
+        f = _fold(field_name)
+        return next((c for c, n in self.fields.get(table, {}).items() if _fold(n) == f), None)
 
 
 def _fold(s: str) -> str:
@@ -304,11 +324,14 @@ def tables_to_semantic_model(
     root_neo4j: dict,
     stash: bool,
     report: LossReport,
-) -> dict | None:
-    """OGS tables ➜ an Ossie semantic model dict, or None if the model has no tables."""
+) -> tuple[dict | None, TableIndex]:
+    """OGS tables ➜ ``(semantic model dict, table index)``. The dict is None if there are no
+    tables."""
     if model.extensions is None or not model.extensions.data_source_tables:
-        return None
-    return _TablesToOssie(model, stash, report).run(name, description, root_neo4j)
+        return None, TableIndex()
+    t = _TablesToOssie(model, stash, report)
+    sm = t.run(name, description, root_neo4j)
+    return sm, TableIndex(dict(t.dataset_name), {k: dict(v) for k, v in t.field_of.items()})
 
 
 # --- Ossie ➜ OGS -----------------------------------------------------------------------------
@@ -329,8 +352,10 @@ class _SemanticToTables:
         target[key] = value
         self.r.add(Loss.STASHED, code, path, why)
 
-    def run(self, model_name: str | None, model_description: str | None) -> tuple[dict, dict, dict]:
-        """Returns ``(data_source_tables, semantic model stash, root NEO4J data)``."""
+    def run(
+        self, model_name: str | None, model_description: str | None
+    ) -> tuple[dict, dict, dict, TableIndex]:
+        """Returns ``(data_source_tables, semantic model stash, root NEO4J data, index)``."""
         self.table_of: dict[str, str] = {}  # folded dataset name ➜ table id
         self.col_of: dict[str, dict[str, str]] = {}  # table id ➜ folded field name ➜ column
         tables: dict[str, dict] = {}
@@ -457,13 +482,15 @@ class _SemanticToTables:
             "nonportable_extensions",
             "other vendors' extensions kept in custom.ossie",
         )
-        for t in tables.values():
-            t.pop("_dataset_name")
-            t.pop("_field_name")
+        index = TableIndex()
+        for tid, t in tables.items():
+            index.dataset[tid] = t.pop("_dataset_name")
+            names = t.pop("_field_name")  # folded field name ➜ field name
+            index.fields[tid] = {col: names[f] for f, col in self.col_of[tid].items()}
             extra = t.pop("_unrepresentable_fks", None)
             if extra:
                 t.setdefault("foreign_keys", {}).update(extra)
-        return tables, root, ours
+        return tables, root, ours, index
 
     def table(self, ds) -> tuple[str, dict]:
         path = f"datasets.{ds.name}"
@@ -638,8 +665,9 @@ def semantic_model_to_tables(
     model_description: str | None,
     stash: bool,
     report: LossReport,
-) -> tuple[dict, dict, dict]:
-    """An Ossie semantic model ➜ ``(data_source_tables, custom.ossie.semantic_model, NEO4J data)``.
+) -> tuple[dict, dict, dict, TableIndex]:
+    """An Ossie semantic model ➜ ``(data_source_tables, custom.ossie.semantic_model, NEO4J data,
+    table index)``.
 
     ``model_name`` and ``model_description`` are what the OGS model already has, from the
     ontology if there is one. The semantic model's own name and description are stashed only if

@@ -39,7 +39,8 @@ def _to_neo4j(onto, sm, **kw):
 def _back(conversion) -> dict:
     docs = conversion.documents
     if ONTO in docs:
-        return to_neo4j(docs[ONTO], semantic_model=docs.get(SM)).output
+        mapping = docs.get(DocumentKind.OSSIE_MAPPING)
+        return to_neo4j(docs[ONTO], semantic_model=docs.get(SM), mapping=mapping).output
     return to_neo4j(docs[SM]).output
 
 
@@ -180,9 +181,8 @@ def test_nothing_to_convert():
         to_ossie(minimal_ogs())
 
 
-def test_mappings_still_ride_on_the_ontology_until_phase_3():
+def test_tables_are_not_annotations_any_more():
     docs = to_ossie(FIXTURES / "ogs/movies-import.yaml").documents
-    assert "neo4j:data_source_mappings" in docs[ONTO]["annotations"]
     assert "neo4j:data_source_tables" not in docs[ONTO]["annotations"]
     assert [d["name"] for d in docs[SM]["datasets"]] == ["people", "movies", "cast"]
 
@@ -298,9 +298,11 @@ def test_cli_out_dir_and_semantic_model(tmp_path):
     assert main(["to-ossie", str(FIXTURES / "ogs/movies-import.yaml"), "--out-dir", str(out)]) == 0
     onto = out / "movies-import.ontology.yaml"
     sm = out / "movies-import.semantic_model.yaml"
-    assert onto.exists() and sm.exists()
+    mapping = out / "movies-import.mapping.yaml"
+    assert onto.exists() and sm.exists() and mapping.exists()
     back = tmp_path / "back.yaml"
-    assert main(["to-neo4j", str(onto), "--semantic-model", str(sm), "-o", str(back)]) == 0
+    args = ["to-neo4j", str(onto), "--semantic-model", str(sm), "--mapping", str(mapping)]
+    assert main([*args, "-o", str(back)]) == 0
     assert _normalized(load(back)) == _normalized(fixture("ogs/movies-import.yaml"))
 
 
@@ -312,7 +314,7 @@ def test_cli_single_out_with_two_documents_fails(tmp_path, capsys):
 
 def test_cli_stdout_has_one_yaml_document_per_output(capsys):
     assert main(["to-ossie", str(FIXTURES / "ogs/movies-import.yaml")]) == 0
-    assert capsys.readouterr().out.count("\n---\n") == 1
+    assert capsys.readouterr().out.count("\n---\n") == 2  # ontology, semantic model, mapping
 
 
 def test_report_kinds_cover_semantic_layer(tpcds):

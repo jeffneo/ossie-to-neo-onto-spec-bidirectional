@@ -66,16 +66,20 @@ Source = str | Path | dict[str, Any]
 def to_ossie(source: Source, *, stash: bool = True) -> Conversion:
     """Convert an OGS document to Ossie documents.
 
-    The result holds an ontology if the model has nodes, and a semantic model if it has
-    ``data_source_tables``.
+    The result holds:
+    - an ontology if the model has nodes;
+    - a semantic model if it has ``data_source_tables``;
+    - a mapping document if it has nodes, tables and ``data_source_mappings``.
     """
     loaded = _read(source, {DocumentKind.OGS})
-    onto, sm, report = ogs_to_ossie(loaded.normalized, stash=stash)
+    onto, sm, mapping, report = ogs_to_ossie(loaded.normalized, stash=stash)
     documents: dict[DocumentKind, dict[str, Any]] = {}
     if onto is not None:
         documents[DocumentKind.OSSIE_ONTOLOGY] = onto
     if sm is not None:
         documents[DocumentKind.OSSIE_SEMANTIC_MODEL] = sm
+    if mapping is not None:
+        documents[DocumentKind.OSSIE_MAPPING] = mapping
     if not documents:
         raise ConversionError("nothing to convert: the model has no nodes and no tables", [])
     for kind, doc in documents.items():
@@ -87,12 +91,14 @@ def to_neo4j(
     source: Source | None = None,
     *,
     semantic_model: Source | None = None,
+    mapping: Source | None = None,
     stash: bool = True,
 ) -> Conversion:
     """Convert Ossie documents to one OGS document.
 
-    ``source`` may be an ontology or a semantic model. Pass ``semantic_model=`` as well to
-    combine an ontology with its semantic model.
+    ``source`` may be an ontology or a semantic model. To combine an ontology with its semantic
+    model, pass ``semantic_model=`` as well. To add the mapping document that links the two,
+    also pass ``mapping=``.
     """
     onto = sm = None
     issues: list[Issue] = []
@@ -111,7 +117,27 @@ def to_neo4j(
         sm = loaded.normalized
     if onto is None and sm is None:
         raise ConversionError("need an Ossie ontology, a semantic model, or both", [])
-    out, report = ossie_to_ogs(onto, sm, stash=stash)
+    md = None
+    if mapping is not None:
+        if onto is None or sm is None:
+            raise ConversionError("a mapping needs both its ontology and its semantic model", [])
+        loaded = _read(mapping, {DocumentKind.OSSIE_MAPPING})
+        issues += loaded.issues
+        md = loaded.normalized
+        for ref, doc, what in (
+            (md.ontology_ref, onto, "ontology"),
+            (md.semantic_model_ref, sm, "semantic model"),
+        ):
+            if ref.name != doc.name:
+                issues.append(
+                    Issue(
+                        "mapping_ref_mismatch",
+                        f"mapping refers to {what} {ref.name!r}, but got {doc.name!r}",
+                        f"{what.replace(' ', '_')}_ref.name",
+                        Severity.WARNING,
+                    )
+                )
+    out, report = ossie_to_ogs(onto, sm, md, stash=stash)
     _check_output(out, DocumentKind.OGS)
     return Conversion({DocumentKind.OGS: out}, report, issues)
 

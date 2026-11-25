@@ -1,7 +1,6 @@
 """Command-line interface: validate, normalize, and convert between OGS and Ossie.
 
-Converts OGS models to and from Ossie ontology and semantic model documents. The mapping
-document arrives in phase 3.
+Converts OGS models to and from Ossie ontology, semantic model and mapping documents.
 """
 
 from __future__ import annotations
@@ -34,8 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     n.add_argument("--format", choices=["yaml", "json"], default="yaml")
 
     for name, help_text in (
-        ("to-ossie", "convert an OGS document to Ossie ontology / semantic model documents"),
-        ("to-neo4j", "convert Ossie documents (ontology and/or semantic model) to OGS"),
+        ("to-ossie", "convert an OGS document to Ossie ontology / semantic model / mapping"),
+        ("to-neo4j", "convert Ossie documents (ontology, semantic model, mapping) to OGS"),
     ):
         c = sub.add_parser(name, help=help_text)
         c.add_argument(
@@ -58,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
             c.add_argument(
                 "--semantic-model",
                 help="an Ossie semantic model to combine with the ontology given as FILE",
+            )
+            c.add_argument(
+                "--mapping",
+                help="an Ossie mapping document linking the ontology and semantic model",
             )
         c.add_argument("--report", help="write the loss report as JSON to this file")
         c.add_argument(
@@ -132,7 +135,10 @@ def _convert(args: argparse.Namespace) -> int:
             result: Conversion = to_ossie(args.file, stash=not args.no_stash)
         else:
             result = to_neo4j(
-                args.file, semantic_model=args.semantic_model, stash=not args.no_stash
+                args.file,
+                semantic_model=args.semantic_model,
+                mapping=args.mapping,
+                stash=not args.no_stash,
             )
     except ConversionError as e:
         print(f"error: {e}", file=sys.stderr)

@@ -39,6 +39,7 @@ from .common import (
     unary_verbalization,
     verbalization_fits,
 )
+from .mappings import LinkInfo, build_context, normalize_mappings, ogs_to_ossie_mappings
 from .naming import kebab, pascal, snake, unique
 from .report import Loss, LossReport
 from .semantic import tables_to_semantic_model
@@ -67,7 +68,7 @@ ANY_NODE = "Neo4jNode"  # stub source concept for relationships with an unconstr
 
 
 class _ToOssie:
-    def __init__(self, model: GraphModel, stash: bool):
+    def __init__(self, model: GraphModel, stash: bool, mappings_elsewhere: bool = False):
         self.m = model
         self.stash = stash
         self.r = LossReport("ogs->ossie")
@@ -76,6 +77,9 @@ class _ToOssie:
         self.root_os = _ossie(model)
         self.value_types = {vt["concept"]: vt for vt in self.root_os.get("value_types", [])}
         self.generated: dict[str, dict] = {}
+        self.link_info: dict[str, LinkInfo] = {}
+        # True when the mappings become an Ossie mapping document instead of an annotation.
+        self.mappings_elsewhere = mappings_elsewhere
         self.stubs: dict[str, dict] = {}
         self._assign_concepts()
 
@@ -235,7 +239,7 @@ class _ToOssie:
         if ext is not None:
             # Tables become the semantic model (convert/semantic.py). Mappings become the
             # mapping document in phase 3; until then they ride along in annotations.
-            if ext.data_source_mappings:
+            if ext.data_source_mappings and not self.mappings_elsewhere:
                 self.put(
                     out,
                     "data_source_mappings",
@@ -467,6 +471,7 @@ class _ToOssie:
         if "target" not in keys:
             keys.insert(0, "target")
         roles = [target_role if k == "target" else prop_roles[k] for k in keys]
+        self.link_info[rid] = LinkInfo(src, name, tgt, keys, [r["concept"] for r in roles])
 
         from_c, to_c = _counts(rel.from_), _counts(rel.to)
         if props:
@@ -546,24 +551,29 @@ def _compact_iris(doc: dict) -> None:
 
 def ogs_to_ossie(
     model: GraphModel, *, stash: bool = True
-) -> tuple[dict | None, dict | None, LossReport]:
+) -> tuple[dict | None, dict | None, dict | None, LossReport]:
     """Convert a normalized OGS model to Ossie documents (as dicts).
 
-    Returns ``(ontology, semantic_model, report)``:
+    Returns ``(ontology, semantic_model, mapping, report)``:
     - the ontology is None if the model has no nodes;
-    - the semantic model is None if the model has no ``data_source_tables``.
+    - the semantic model is None if the model has no ``data_source_tables``;
+    - the mapping document is None unless there are nodes, tables *and* mappings. Without one
+      of those, the mappings ride along in annotations (or on the semantic model).
 
     When there is no ontology, model-level OGS metadata such as ``id``, ``version`` and
     ``custom`` rides on the semantic model's NEO4J extension instead.
     """
-    t = _ToOssie(model, stash)
+    ext = model.extensions
+    has_mappings = bool(ext and ext.data_source_mappings)
+    will_map = bool(model.nodes) and bool(ext and ext.data_source_tables) and has_mappings
+    t = _ToOssie(model, stash, mappings_elsewhere=will_map)
     onto = t.run()
     root_neo4j: dict = {}
     if not onto["ontology"]:
         ours, _ = split_annotations(onto.get("annotations"))
         root_neo4j = ours
         onto = None
-    sm = tables_to_semantic_model(
+    sm, index = tables_to_semantic_model(
         model,
         name=model.name or model.id,
         description=model.description,
@@ -571,4 +581,30 @@ def ogs_to_ossie(
         stash=stash,
         report=t.r,
     )
-    return onto, sm, t.r
+    mapping = None
+    if will_map and onto is not None and sm is not None:
+        mapping = _mapping_document(model, onto, sm, t, index, stash)
+    return onto, sm, mapping, t.r
+
+
+def _mapping_document(model, onto, sm, t: _ToOssie, index, stash: bool) -> dict:
+    current = normalize_mappings(
+        {k: [ogs_dict(x) for x in v] for k, v in model.extensions.data_source_mappings.items()}
+    )
+    kept = t.root_os.get("mapping")
+    if stash and kept and kept.get("snapshot") == current:
+        # The original Ossie mapping document, kept whole because OGS can't express all of it,
+        # and the OGS mappings are unchanged since. See to_ogs.ossie_to_ogs.
+        return kept["document"]
+    ctx = build_context(ogs_dict(model), onto, t.concept_of, t.link_info, index)
+    cms, blob = ogs_to_ossie_mappings(current, ctx, t.r, stash=stash)
+    doc: dict[str, Any] = {
+        "version": SPEC_VERSION,
+        "name": f"{snake(model.id)}_mapping",
+        "ontology_ref": {"name": onto["name"], "iri": f"./{model.id}.ontology.yaml"},
+        "semantic_model_ref": {"name": sm["name"], "iri": f"./{model.id}.semantic_model.yaml"},
+        "concept_mappings": cms,
+    }
+    if blob:
+        doc["nonportable_extensions"] = [{"vendor_name": "NEO4J", "data": blob}]
+    return doc

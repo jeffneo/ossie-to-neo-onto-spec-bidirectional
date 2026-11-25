@@ -2,7 +2,7 @@
 
 A converter that translates in both directions between the **Neo4j Ontology Graph Spec** (OGS) and **Apache Ossie** (incubating; formerly Open Semantic Interchange, OSI).
 
-> Status: **phase 2 done**. OGS converts to and from Ossie *ontology* and *semantic model* documents. Every fixture and every fixture pair round-trips losslessly, and each conversion produces a loss report. Next is phase 3: OGS mappings ↔ Ossie mapping document. See [Development](#development).
+> Status: **phase 3 done**. One OGS document converts to and from the full set of three Ossie documents: *ontology*, *semantic model* and *mapping*. Every fixture, including the upstream Flights and SAP ontology / semantic model / mapping sets, round-trips losslessly, and each conversion produces a loss report. Next is phase 4: core-only mode, Ossie 0.1.1 input, and CLI polish. See [Development](#development).
 
 ## 1. The two formats at a glance
 
@@ -119,14 +119,25 @@ Ossie ➜ OGS specifics:
 
 ### 3.3 Mapping layer: OGS mappings ↔ Ossie mapping document
 
+As implemented in phase 3 (`convert/mappings.py`). A mapping document is produced when the OGS model has nodes, tables *and* mappings. It references the other two documents by name, with `iri: ./<id>.ontology.yaml` and `./<id>.semantic_model.yaml`. Column references are written `DATASET.field`.
+
 | OGS `data_source_mappings` | Ossie `concept_mappings` |
 |---|---|
-| `NODE` mapping (node, table, key, properties) | `object_mappings` with `referent_mappings` over the `identify_by` relationships (`expression: TABLE.column`). Non-key properties become `link_mappings`. |
-| `RELATIONSHIP` mapping (from_node/to_node keys) | `link_mappings` on the relationship |
-| `QUERY` mapping | `nonportable_extensions[NEO4J]` (no Ossie equivalent) |
-| `mode`, `match_label`, `depends_on` | `nonportable_extensions[NEO4J]` |
+| `NODE` mapping (node, table, key, properties) | On the node's concept: an object mapping that identifies objects by the key properties (`referent_mappings` → `TABLE.column`). Plus a link mapping with that identity, whose children populate the other properties (`{concept: String, expression: people.full_name}` → `name`). With no explicit `key`, the concept's `identify_by` is used. |
+| `RELATIONSHIP` mapping (from_node, to_node, properties) | A link-mapping tree on the source concept. The levels follow the relationship's roles: the source identity, then the target identity, then one level per relationship property. The last level names the relationship. This matches the tree semantics of the Ossie spec, where a level's depth is the arity of the relationship it names. |
+| `QUERY` mapping | No Ossie equivalent. Kept in `nonportable_extensions[NEO4J]`. |
+| set id, mapping order, `id`, `mode`, `match_label`, `depends_on`, explicit `key`, non-default end labels | `nonportable_extensions[NEO4J]` on the mapping document. Left out entirely when the concept mappings alone reproduce the OGS mappings. |
 
-Ossie notes that tool support for standalone mapping documents is "not yet available". We emit the standalone form and also read the deprecated embedded `ontology_mappings` form.
+**Ossie ➜ OGS** parses the trees back. Object mappings and link mappings that share an identity merge into one `NODE` mapping. A child that names a link becomes a `RELATIONSHIP` mapping. Constructs OGS mappings can't express are reported as approximated and left out of the OGS mappings:
+- filtered or computed expressions (`FLIGHT.id WHERE ( FLIGHT.cancelled == TRUE )`);
+- **nested referents**, i.e. entities identified through other entities (Flights: `Runway` by `designator` + `airport.code`);
+- expressions that span datasets;
+- unary relationships, which are optional labels in OGS (OGS mappings can't set labels);
+- mappings to reified relationships.
+
+**Keeping the original document.** After parsing, the converter regenerates a mapping document from the resulting OGS mappings. If that doesn't reproduce the input, the input document is kept whole in `custom.ossie.mapping`, together with a snapshot of the OGS mappings it produced. Going back to Ossie, the kept document is restored only while the OGS mappings still equal the snapshot. Once they've been edited, the mapping document is regenerated from OGS (native wins). The upstream Flights and SAP mappings are kept this way. A mapping that OGS can express fully is never kept whole.
+
+Without nodes or without tables there is no mapping document. The OGS mappings then ride along in the ontology's annotations or on the semantic model's `NEO4J` extension, as in phase 2.
 
 ### 3.4 "Core-only" mode
 
@@ -169,11 +180,12 @@ Package layout (`src/ossie_neo4j/`):
 | `ogs/rules.py`, `ossie/rules.py` | The cross-reference rules that JSON Schema can't express: the OGS "Core" rules, plus Ossie name-resolution and ontology rules. |
 | `pipeline.py` | `read()`: parse ➜ schema ➜ model ➜ rules ➜ normalize. A stage runs only if the earlier stages found no errors. |
 | `convert/to_ossie.py`, `convert/to_ogs.py` | The two directions of the ontology conversion (§3.1). They also assemble the semantic-model half. |
-| `convert/semantic.py` | Tables ⇄ semantic model, in both directions (§3.2). |
+| `convert/semantic.py` | Tables ⇄ semantic model, in both directions (§3.2). Also builds the `TableIndex` (table ⇄ dataset, column ⇄ field). |
+| `convert/mappings.py` | OGS mappings ⇄ Ossie concept mappings, in both directions (§3.3). Uses a `MapContext` built from the OGS document, the ontology, the link correspondences and the `TableIndex`. |
 | `convert/common.py` | Conventions both directions share: annotation keys, default ids, names, verbalizations and relationship types, constraint derivation, and count ⇄ multiplicity. |
 | `convert/types.py` | Neo4j type ⇄ value concept tables, generated `Neo4j*` value types, and the value-type resolver. Also Neo4j type ⇄ Ossie field `datatype`, and source-type inference. |
 | `convert/report.py` | The loss report, with entries of kind `stashed`, `approximated` or `dropped`. |
-| `convert/__init__.py` | Public API: `to_ossie(ogs)` gives an ontology and/or a semantic model; `to_neo4j(ontology_or_sm, semantic_model=...)` gives one OGS document. Each validates the inputs, converts them, re-validates the outputs, and returns `Conversion.documents` with a loss report. |
+| `convert/__init__.py` | Public API: `to_ossie(ogs)` gives up to three documents (ontology, semantic model, mapping); `to_neo4j(ontology_or_sm, semantic_model=..., mapping=...)` gives one OGS document. Each validates the inputs, converts them, re-validates the outputs, and returns `Conversion.documents` with a loss report. `to_neo4j` warns if the mapping's `*_ref` names don't match the documents given. |
 | `cli.py` | `ossie-neo4j validate`, `normalize`, `to-ossie` and `to-neo4j`. |
 
 ## 4. CLI
@@ -181,10 +193,10 @@ Package layout (`src/ossie_neo4j/`):
 ```bash
 uv run ossie-neo4j to-ossie tests/fixtures/ogs/movies-import.yaml --out-dir out/ --report loss.json
 ```
-This writes `out/movies-import.ontology.yaml` and `out/movies-import.semantic_model.yaml`.
+This writes `out/movies-import.ontology.yaml`, `.semantic_model.yaml` and `.mapping.yaml`.
 
 ```bash
-uv run ossie-neo4j to-neo4j out/movies-import.ontology.yaml --semantic-model out/movies-import.semantic_model.yaml -o back.ogs.yaml
+uv run ossie-neo4j to-neo4j out/movies-import.ontology.yaml --semantic-model out/movies-import.semantic_model.yaml --mapping out/movies-import.mapping.yaml -o back.ogs.yaml
 ```
 
 ```bash
@@ -193,7 +205,7 @@ uv run ossie-neo4j to-neo4j tests/fixtures/ossie/tpcds_semantic_model.yaml -o tp
 A semantic model on its own produces an OGS document with tables and no nodes. Deriving nodes from datasets is core-only mode, in phase 4.
 
 Output:
-- `to-ossie` writes an ontology if the model has nodes, and a semantic model if it has tables.
+- `to-ossie` writes an ontology if the model has nodes, a semantic model if it has tables, and a mapping document if it has nodes, tables and mappings.
 - Use `--out-dir DIR` (with `--format yaml|json`) for more than one document. `-o FILE` works when there's one.
 - Without either option, YAML goes to stdout, one `---`-separated document per output.
 - A summary of the loss report goes to stderr.
@@ -202,8 +214,6 @@ Flags:
 - `--report FILE` writes the full loss report as JSON;
 - `--strict` exits with code 2 if anything was approximated or dropped;
 - `--no-stash` produces clean output with no vendor annotations, extensions or custom data. Everything that would have been stashed is reported as dropped.
-
-Planned for phase 3: `--mapping` on `to-neo4j`, and a `<id>.mapping.yaml` output from `to-ossie`.
 
 ## 5. Testing strategy
 
@@ -231,7 +241,7 @@ Planned for phase 3: `--mapping` on `to-neo4j`, and a `<id>.mapping.yaml` output
 | 0 ✅ | Repo scaffold, pinned schemas, Pydantic models for both specs, fixtures, normalizers |
 | 1 ✅ | OGS nodes/relationships/properties ↔ Ossie ontology, with stashing and the loss report |
 | 2 ✅ | OGS tables ↔ Ossie semantic model (datasets, fields, keys, FK relationships, metrics stash) |
-| 3 | OGS mappings ↔ Ossie mapping document |
+| 3 ✅ | OGS mappings ↔ Ossie mapping document |
 | 4 | Core-only mode, Ossie 0.1.1 → 0.3.0 migration on input, CLI polish |
 | 5 | Upstream: contribute to `apache/ossie-converters`, and propose the `NEO4J` vendor token |
 

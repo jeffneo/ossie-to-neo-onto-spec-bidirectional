@@ -24,7 +24,14 @@ from typing import Any
 from ..ogs import SCHEMA_URL
 from ..ogs.models import Constraint, Neo4jType
 from ..ogs.models import to_dict as ogs_dict
-from ..ossie.models import BUILTIN_CONCEPTS, ConceptType, Multiplicity, Ontology, SemanticModel
+from ..ossie.models import (
+    BUILTIN_CONCEPTS,
+    ConceptType,
+    MappingDocument,
+    Multiplicity,
+    Ontology,
+    SemanticModel,
+)
 from ..ossie.models import to_dict as ossie_dict
 from .common import (
     DEFAULT_OGS_VERSION,
@@ -43,6 +50,7 @@ from .common import (
     split_annotations,
     unary_verbalization,
 )
+from .mappings import LinkInfo, build_context, normalize_mappings, ossie_to_ogs_mappings
 from .naming import kebab, pascal, snake, unique, upper_snake
 from .report import Loss, LossReport
 from .semantic import semantic_model_to_tables, split_nonportable
@@ -80,6 +88,7 @@ class _ToOgs:
         self.nodes: dict[str, dict] = {}
         self.rels: dict[str, dict] = {}
         self.one_to_one: dict[str, list[str]] = {}
+        self.link_info: dict[str, LinkInfo] = {}
 
     # --- helpers -------------------------------------------------------------------------------
 
@@ -599,6 +608,13 @@ class _ToOgs:
         if ext:
             rel["extensions"] = ext
         self.rels[rid] = rel
+        self.link_info[rid] = LinkInfo(
+            src,
+            r.name,
+            target.concept,
+            [key_at[i] for i in range(len(roles))],
+            [x.concept for x in roles],
+        )
 
     def reify(self, owner: str, owner_nid: str, index: int, r, rd: dict, path: str) -> None:
         """Turn an n-ary relationship into an intermediate node with one relationship per role."""
@@ -667,19 +683,28 @@ def _strip_neo4j(role: dict) -> dict:
 def ossie_to_ogs(
     onto: Ontology | None,
     semantic_model: SemanticModel | None = None,
+    mapping: MappingDocument | None = None,
     *,
     stash: bool = True,
 ) -> tuple[dict, LossReport]:
     """Convert normalized Ossie documents to one longhand OGS document (as a dict).
 
-    The ontology gives nodes and relationships. The semantic model gives
-    ``extensions.data_source_tables``. At least one of the two is needed.
+    - The ontology gives nodes and relationships.
+    - The semantic model gives ``extensions.data_source_tables``.
+    - The mapping document, which needs both of the above, gives
+      ``extensions.data_source_mappings``.
+
+    At least an ontology or a semantic model is needed.
     """
     if onto is None and semantic_model is None:
         raise ValueError("need an ontology, a semantic model, or both")
+    if mapping is not None and (onto is None or semantic_model is None):
+        raise ValueError("a mapping document needs both its ontology and its semantic model")
     report = LossReport("ossie->ogs")
+    t = None
     if onto is not None:
-        out = _ToOgs(onto, stash, report).run()
+        t = _ToOgs(onto, stash, report)
+        out = t.run()
         for n in out.get("nodes", {}).values():
             n.pop("_stashed_constraints", None)
     else:
@@ -705,7 +730,7 @@ def ossie_to_ogs(
     if semantic_model is not None:
         # Without an ontology the OGS model was named after the semantic model, so compare
         # against that (it may be absent from ``out`` if the original OGS model had no name).
-        tables, sm_stash, _ = semantic_model_to_tables(
+        tables, sm_stash, _, index = semantic_model_to_tables(
             semantic_model,
             model_name=out.get("name") if onto is not None else semantic_model.name,
             model_description=out.get("description")
@@ -718,4 +743,51 @@ def ossie_to_ogs(
         ext["data_source_tables"] = tables
         if sm_stash:
             ext.setdefault("custom", {}).setdefault(OSSIE, {})["semantic_model"] = sm_stash
+
+    if mapping is not None:
+        _apply_mapping(out, onto, mapping, t, index, stash, report)
     return out, report
+
+
+def _apply_mapping(out, onto, mapping, t: _ToOgs, index, stash: bool, report: LossReport) -> None:
+    """Parse the mapping document into ``data_source_mappings``.
+
+    OGS mappings can't express all of an Ossie mapping: filters, nested referents and so on.
+    So afterwards we regenerate a mapping document from the OGS result. If that doesn't
+    reproduce the input, the input document is kept whole in ``custom.ossie.mapping``, together
+    with a snapshot of the OGS mappings it produced. On the way back, the document is restored
+    only while the OGS mappings still equal the snapshot (native wins).
+    """
+    md = ossie_dict(mapping)
+    ours, _ = split_nonportable(md.get("nonportable_extensions"))
+    concept_of = {nid: c for c, nid in t.node_id.items()}
+    ctx = build_context(out, ossie_dict(onto), concept_of, t.link_info, index)
+    sets = ossie_to_ogs_mappings(md["concept_mappings"], ours or None, ctx, report)
+    ext = out.setdefault("extensions", {})
+    ext.pop("data_source_mappings", None)
+    if sets:
+        ext["data_source_mappings"] = sets
+    if not stash:
+        return
+
+    from ..ogs.models import GraphModel
+    from ..ogs.normalize import normalize
+    from ..ossie.models import MappingDocument as MD
+    from .to_ossie import ogs_to_ossie
+
+    model, _ = normalize(GraphModel.model_validate(out))
+    _, _, regenerated, _ = ogs_to_ossie(model, stash=True)
+    original = ossie_dict(MD.model_validate(md))
+    if regenerated is not None and ossie_dict(MD.model_validate(regenerated)) == original:
+        return
+    ext.setdefault("custom", {}).setdefault(OSSIE, {})["mapping"] = {
+        "document": original,
+        "snapshot": normalize_mappings(sets),
+    }
+    report.add(
+        Loss.STASHED,
+        "mapping_document_kept",
+        "",
+        "the OGS mappings can't reproduce this mapping document exactly; the original is kept "
+        "in custom.ossie.mapping and restored while the OGS mappings are unchanged",
+    )

@@ -45,9 +45,10 @@ def _back_to_neo4j(conversion, **kw) -> dict:
     docs = conversion.documents
     onto = docs.get(DocumentKind.OSSIE_ONTOLOGY)
     sm = docs.get(DocumentKind.OSSIE_SEMANTIC_MODEL)
+    mapping = docs.get(DocumentKind.OSSIE_MAPPING)
     if onto is None:
         return to_neo4j(sm, **kw).output
-    return to_neo4j(onto, semantic_model=sm, **kw).output
+    return to_neo4j(onto, semantic_model=sm, mapping=mapping, **kw).output
 
 
 @pytest.mark.parametrize("name", OGS_SOURCES)
