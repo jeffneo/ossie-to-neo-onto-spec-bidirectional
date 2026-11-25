@@ -1,7 +1,7 @@
 """Command-line interface: validate, normalize, and convert between OGS and Ossie.
 
-Phase 1 converts OGS models to and from Ossie *ontology* documents. The semantic model and
-mapping documents arrive in phases 2 and 3.
+Converts OGS models to and from Ossie ontology and semantic model documents. The mapping
+document arrives in phase 3.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from .convert import Conversion, ConversionError, Loss, to_neo4j, to_ossie
-from .io import dump, dumps_yaml
+from .io import DocumentKind, dump, dumps_yaml
 from .issues import Severity
 from .pipeline import read
 
@@ -34,14 +34,31 @@ def main(argv: list[str] | None = None) -> int:
     n.add_argument("--format", choices=["yaml", "json"], default="yaml")
 
     for name, help_text in (
-        ("to-ossie", "convert an OGS document to an Ossie ontology document"),
-        ("to-neo4j", "convert an Ossie ontology document to an OGS document"),
+        ("to-ossie", "convert an OGS document to Ossie ontology / semantic model documents"),
+        ("to-neo4j", "convert Ossie documents (ontology and/or semantic model) to OGS"),
     ):
         c = sub.add_parser(name, help=help_text)
-        c.add_argument("file")
         c.add_argument(
-            "-o", "--out", help="output file (.yaml or .json); default: print YAML to stdout"
+            "file",
+            help="the input: an OGS document, or an Ossie ontology or semantic model",
         )
+        c.add_argument(
+            "-o",
+            "--out",
+            help="output file (.yaml or .json) when there is one output document; "
+            "default: print YAML to stdout",
+        )
+        if name == "to-ossie":
+            c.add_argument(
+                "--out-dir",
+                help="write each output document to <dir>/<id>.<kind>.<format>",
+            )
+            c.add_argument("--format", choices=["yaml", "json"], default="yaml")
+        else:
+            c.add_argument(
+                "--semantic-model",
+                help="an Ossie semantic model to combine with the ontology given as FILE",
+            )
         c.add_argument("--report", help="write the loss report as JSON to this file")
         c.add_argument(
             "--strict",
@@ -110,18 +127,38 @@ def _normalize(file: str, fmt: str) -> int:
 
 
 def _convert(args: argparse.Namespace) -> int:
-    convert = to_ossie if args.command == "to-ossie" else to_neo4j
     try:
-        result: Conversion = convert(args.file, stash=not args.no_stash)
+        if args.command == "to-ossie":
+            result: Conversion = to_ossie(args.file, stash=not args.no_stash)
+        else:
+            result = to_neo4j(
+                args.file, semantic_model=args.semantic_model, stash=not args.no_stash
+            )
     except ConversionError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     for i in result.input_issues:
         print(f"input: {i}", file=sys.stderr)
-    if args.out:
+
+    docs = result.documents
+    if getattr(args, "out_dir", None):
+        out_dir = Path(args.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = _output_stem(result)
+        for kind, doc in docs.items():
+            path = out_dir / f"{stem}.{_SUFFIX[kind]}.{args.format}"
+            dump(doc, path)
+            print(f"wrote {path}", file=sys.stderr)
+    elif args.out:
+        if len(docs) > 1:
+            print(
+                f"error: {len(docs)} output documents ({', '.join(docs)}); use --out-dir",
+                file=sys.stderr,
+            )
+            return 1
         dump(result.output, args.out)
     else:
-        print(dumps_yaml(result.output), end="")
+        print("---\n".join(dumps_yaml(d) for d in docs.values()), end="")
     if args.report:
         Path(args.report).write_text(json.dumps(result.report.to_dict(), indent=2) + "\n")
 
@@ -132,6 +169,23 @@ def _convert(args: argparse.Namespace) -> int:
     for e in lossy:
         print(f"  [{e.kind}] {e.code} at {e.path}: {e.message}", file=sys.stderr)
     return 2 if args.strict and lossy else 0
+
+
+_SUFFIX = {
+    DocumentKind.OSSIE_ONTOLOGY: "ontology",
+    DocumentKind.OSSIE_SEMANTIC_MODEL: "semantic_model",
+    DocumentKind.OSSIE_MAPPING: "mapping",
+    DocumentKind.OGS: "ogs",
+}
+
+
+def _output_stem(result: Conversion) -> str:
+    """A file-name stem for the outputs: the source model's id, else the kebab-case name."""
+    from .convert.naming import kebab
+
+    doc = result.output
+    ours = {k: v for k, v in (doc.get("annotations") or {}).items() if k == "neo4j:id"}
+    return ours.get("neo4j:id") or kebab(doc.get("name") or "model")
 
 
 if __name__ == "__main__":

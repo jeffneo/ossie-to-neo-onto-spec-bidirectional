@@ -35,11 +35,13 @@ from .common import (
     link_verbalization,
     predicted_link_name,
     regenerated_counts,
+    split_annotations,
     unary_verbalization,
     verbalization_fits,
 )
 from .naming import kebab, pascal, snake, unique
 from .report import Loss, LossReport
+from .semantic import tables_to_semantic_model
 from .types import element, element_concept, resolve
 
 
@@ -231,15 +233,8 @@ class _ToOssie:
         self.put(out, "custom", _without_ossie(_custom(self.m)), "extensions.custom")
         ext = self.m.extensions
         if ext is not None:
-            # Phase 2 and 3 map these natively to an Ossie semantic model and mapping document.
-            # Until then they ride along in annotations.
-            if ext.data_source_tables:
-                self.put(
-                    out,
-                    "data_source_tables",
-                    {k: ogs_dict(v) for k, v in ext.data_source_tables.items()},
-                    "extensions.data_source_tables",
-                )
+            # Tables become the semantic model (convert/semantic.py). Mappings become the
+            # mapping document in phase 3; until then they ride along in annotations.
             if ext.data_source_mappings:
                 self.put(
                     out,
@@ -549,7 +544,31 @@ def _compact_iris(doc: dict) -> None:
                 r["iri"] = compact_iri(r["iri"], prefixes)
 
 
-def ogs_to_ossie(model: GraphModel, *, stash: bool = True) -> tuple[dict, LossReport]:
-    """Convert a normalized OGS model to an Ossie ontology document (as a dict)."""
+def ogs_to_ossie(
+    model: GraphModel, *, stash: bool = True
+) -> tuple[dict | None, dict | None, LossReport]:
+    """Convert a normalized OGS model to Ossie documents (as dicts).
+
+    Returns ``(ontology, semantic_model, report)``:
+    - the ontology is None if the model has no nodes;
+    - the semantic model is None if the model has no ``data_source_tables``.
+
+    When there is no ontology, model-level OGS metadata such as ``id``, ``version`` and
+    ``custom`` rides on the semantic model's NEO4J extension instead.
+    """
     t = _ToOssie(model, stash)
-    return t.run(), t.r
+    onto = t.run()
+    root_neo4j: dict = {}
+    if not onto["ontology"]:
+        ours, _ = split_annotations(onto.get("annotations"))
+        root_neo4j = ours
+        onto = None
+    sm = tables_to_semantic_model(
+        model,
+        name=model.name or model.id,
+        description=model.description,
+        root_neo4j=root_neo4j,
+        stash=stash,
+        report=t.r,
+    )
+    return onto, sm, t.r

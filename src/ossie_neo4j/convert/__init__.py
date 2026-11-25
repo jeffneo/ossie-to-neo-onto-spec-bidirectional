@@ -39,38 +39,90 @@ class ConversionError(Exception):
 
 @dataclass
 class Conversion:
-    output: dict[str, Any]
-    kind: DocumentKind
+    documents: dict[DocumentKind, dict[str, Any]]
+    """Every output document by kind. OGS ➜ Ossie may give an ontology, a semantic model, or
+    both. Ossie ➜ OGS always gives a single OGS document."""
     report: LossReport
     input_issues: list[Issue] = field(default_factory=list)
-    """Warnings found in the input. Inputs with errors raise :class:`ConversionError`."""
+    """Warnings found in the inputs. Inputs with errors raise :class:`ConversionError`."""
+
+    @property
+    def output(self) -> dict[str, Any]:
+        """The main output document: the OGS document, or else the ontology, or else the
+        semantic model."""
+        for kind in (DocumentKind.OGS, DocumentKind.OSSIE_ONTOLOGY):
+            if kind in self.documents:
+                return self.documents[kind]
+        return self.documents[DocumentKind.OSSIE_SEMANTIC_MODEL]
+
+    @property
+    def kind(self) -> DocumentKind:
+        return next(k for k, v in self.documents.items() if v is self.output)
 
 
 Source = str | Path | dict[str, Any]
 
 
 def to_ossie(source: Source, *, stash: bool = True) -> Conversion:
-    """Convert an OGS document to an Ossie ontology document."""
-    loaded = _read(source, DocumentKind.OGS)
-    out, report = ogs_to_ossie(loaded.normalized, stash=stash)
-    _check_output(out, DocumentKind.OSSIE_ONTOLOGY)
-    return Conversion(out, DocumentKind.OSSIE_ONTOLOGY, report, loaded.issues)
+    """Convert an OGS document to Ossie documents.
+
+    The result holds an ontology if the model has nodes, and a semantic model if it has
+    ``data_source_tables``.
+    """
+    loaded = _read(source, {DocumentKind.OGS})
+    onto, sm, report = ogs_to_ossie(loaded.normalized, stash=stash)
+    documents: dict[DocumentKind, dict[str, Any]] = {}
+    if onto is not None:
+        documents[DocumentKind.OSSIE_ONTOLOGY] = onto
+    if sm is not None:
+        documents[DocumentKind.OSSIE_SEMANTIC_MODEL] = sm
+    if not documents:
+        raise ConversionError("nothing to convert: the model has no nodes and no tables", [])
+    for kind, doc in documents.items():
+        _check_output(doc, kind)
+    return Conversion(documents, report, loaded.issues)
 
 
-def to_neo4j(source: Source, *, stash: bool = True) -> Conversion:
-    """Convert an Ossie ontology document to an OGS document."""
-    loaded = _read(source, DocumentKind.OSSIE_ONTOLOGY)
-    out, report = ossie_to_ogs(loaded.normalized, stash=stash)
+def to_neo4j(
+    source: Source | None = None,
+    *,
+    semantic_model: Source | None = None,
+    stash: bool = True,
+) -> Conversion:
+    """Convert Ossie documents to one OGS document.
+
+    ``source`` may be an ontology or a semantic model. Pass ``semantic_model=`` as well to
+    combine an ontology with its semantic model.
+    """
+    onto = sm = None
+    issues: list[Issue] = []
+    if source is not None:
+        loaded = _read(source, {DocumentKind.OSSIE_ONTOLOGY, DocumentKind.OSSIE_SEMANTIC_MODEL})
+        issues += loaded.issues
+        if loaded.kind is DocumentKind.OSSIE_ONTOLOGY:
+            onto = loaded.normalized
+        else:
+            sm = loaded.normalized
+    if semantic_model is not None:
+        if sm is not None:
+            raise ConversionError("two semantic models given", [])
+        loaded = _read(semantic_model, {DocumentKind.OSSIE_SEMANTIC_MODEL})
+        issues += loaded.issues
+        sm = loaded.normalized
+    if onto is None and sm is None:
+        raise ConversionError("need an Ossie ontology, a semantic model, or both", [])
+    out, report = ossie_to_ogs(onto, sm, stash=stash)
     _check_output(out, DocumentKind.OGS)
-    return Conversion(out, DocumentKind.OGS, report, loaded.issues)
+    return Conversion({DocumentKind.OGS: out}, report, issues)
 
 
-def _read(source: Source, expected: DocumentKind):
+def _read(source: Source, expected: set[DocumentKind]):
     loaded = read(source)
-    if loaded.kind is not expected:
-        raise ConversionError(f"expected {expected} input, got {loaded.kind}", [])
+    if loaded.kind not in expected:
+        names = " or ".join(sorted(expected))
+        raise ConversionError(f"expected {names} input, got {loaded.kind}", [])
     if not loaded.ok:
-        raise ConversionError(f"input is not a valid {expected} document", loaded.issues)
+        raise ConversionError(f"input is not a valid {loaded.kind} document", loaded.issues)
     return loaded
 
 

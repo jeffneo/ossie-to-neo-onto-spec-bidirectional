@@ -24,7 +24,7 @@ from typing import Any
 from ..ogs import SCHEMA_URL
 from ..ogs.models import Constraint, Neo4jType
 from ..ogs.models import to_dict as ogs_dict
-from ..ossie.models import BUILTIN_CONCEPTS, ConceptType, Multiplicity, Ontology
+from ..ossie.models import BUILTIN_CONCEPTS, ConceptType, Multiplicity, Ontology, SemanticModel
 from ..ossie.models import to_dict as ossie_dict
 from .common import (
     DEFAULT_OGS_VERSION,
@@ -45,16 +45,17 @@ from .common import (
 )
 from .naming import kebab, pascal, snake, unique, upper_snake
 from .report import Loss, LossReport
+from .semantic import semantic_model_to_tables, split_nonportable
 from .types import element, element_concept, is_generated, list_of, resolve
 
 _RELATIONSHIP_NATIVE = {"name", "description", "iri", "roles", "multiplicity", "verbalizes"}
 
 
 class _ToOgs:
-    def __init__(self, onto: Ontology, stash: bool):
+    def __init__(self, onto: Ontology, stash: bool, report: LossReport):
         self.o = onto
         self.stash = stash
-        self.r = LossReport("ossie->ogs")
+        self.r = report
         self.defs = {c.concept: ossie_dict(c) for c in onto.ontology}
         self.value_types = {
             n: d for n, d in self.defs.items() if d["type"] == ConceptType.VALUE_TYPE.value
@@ -663,10 +664,58 @@ def _strip_neo4j(role: dict) -> dict:
     return out
 
 
-def ossie_to_ogs(onto: Ontology, *, stash: bool = True) -> tuple[dict, LossReport]:
-    """Convert a normalized Ossie ontology to a longhand OGS document (as a dict)."""
-    t = _ToOgs(onto, stash)
-    out = t.run()
-    for n in out.get("nodes", {}).values():
-        n.pop("_stashed_constraints", None)
-    return out, t.r
+def ossie_to_ogs(
+    onto: Ontology | None,
+    semantic_model: SemanticModel | None = None,
+    *,
+    stash: bool = True,
+) -> tuple[dict, LossReport]:
+    """Convert normalized Ossie documents to one longhand OGS document (as a dict).
+
+    The ontology gives nodes and relationships. The semantic model gives
+    ``extensions.data_source_tables``. At least one of the two is needed.
+    """
+    if onto is None and semantic_model is None:
+        raise ValueError("need an ontology, a semantic model, or both")
+    report = LossReport("ossie->ogs")
+    if onto is not None:
+        out = _ToOgs(onto, stash, report).run()
+        for n in out.get("nodes", {}).values():
+            n.pop("_stashed_constraints", None)
+    else:
+        # No ontology: the OGS model metadata comes from the semantic model.
+        ours, _ = split_nonportable(ossie_dict(semantic_model).get("nonportable_extensions"))
+        out = {
+            "schema": SCHEMA_URL,
+            "version": ours.get("version", DEFAULT_OGS_VERSION),
+            "id": ours.get("id") or kebab(semantic_model.name),
+        }
+        if not ours.get("unnamed"):
+            out["name"] = semantic_model.name
+        if semantic_model.description:
+            out["description"] = semantic_model.description
+        ext: dict = {}
+        if ours.get("data_source_mappings"):
+            ext["data_source_mappings"] = ours["data_source_mappings"]
+        if ours.get("custom"):
+            ext["custom"] = dict(ours["custom"])
+        if ext:
+            out["extensions"] = ext
+
+    if semantic_model is not None:
+        # Without an ontology the OGS model was named after the semantic model, so compare
+        # against that (it may be absent from ``out`` if the original OGS model had no name).
+        tables, sm_stash, _ = semantic_model_to_tables(
+            semantic_model,
+            model_name=out.get("name") if onto is not None else semantic_model.name,
+            model_description=out.get("description")
+            if onto is not None
+            else semantic_model.description,
+            stash=stash,
+            report=report,
+        )
+        ext = out.setdefault("extensions", {})
+        ext["data_source_tables"] = tables
+        if sm_stash:
+            ext.setdefault("custom", {}).setdefault(OSSIE, {})["semantic_model"] = sm_stash
+    return out, report

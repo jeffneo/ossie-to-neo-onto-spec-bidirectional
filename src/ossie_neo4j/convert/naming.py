@@ -46,3 +46,25 @@ def unique(base: str, taken: Container[str]) -> str:
     while name in taken:
         name, n = f"{base}_{n}", n + 1
     return name
+
+
+_SIMPLE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+_QUOTED_IDENT = re.compile(r'^"((?:[^"]|"")+)"$')
+
+
+def sql_identifier(name: str) -> str:
+    """A column name as an SQL identifier, double-quoted if it isn't a plain identifier."""
+    if _SIMPLE_IDENT.match(name):
+        return name
+    return '"' + name.replace('"', '""') + '"'
+
+
+def parse_identifier(sql: str | None) -> str | None:
+    """The column name if ``sql`` is a bare or double-quoted identifier, else None."""
+    if sql is None:
+        return None
+    s = sql.strip()
+    if _SIMPLE_IDENT.match(s):
+        return s
+    m = _QUOTED_IDENT.match(s)
+    return m.group(1).replace('""', '"') if m else None

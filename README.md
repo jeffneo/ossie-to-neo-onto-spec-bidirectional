@@ -2,7 +2,7 @@
 
 A converter that translates in both directions between the **Neo4j Ontology Graph Spec** (OGS) and **Apache Ossie** (incubating; formerly Open Semantic Interchange, OSI).
 
-> Status: **phase 1 done**. OGS ↔ Ossie *ontology* conversion works in both directions. Every fixture round-trips losslessly, and each conversion produces a loss report. Next is phase 2: OGS tables ↔ Ossie semantic model. See [Development](#development).
+> Status: **phase 2 done**. OGS converts to and from Ossie *ontology* and *semantic model* documents. Every fixture and every fixture pair round-trips losslessly, and each conversion produces a loss report. Next is phase 3: OGS mappings ↔ Ossie mapping document. See [Development](#development).
 
 ## 1. The two formats at a glance
 
@@ -98,14 +98,24 @@ These are the rules as implemented in phase 1. "Stashed" means kept in `neo4j:*`
 
 ### 3.2 Physical layer: OGS tables ↔ Ossie semantic model
 
-| OGS `extensions.data_source_tables` | Ossie semantic model |
-|---|---|
-| table id + `source` | `dataset.name` + `dataset.source` |
-| `columns[]` | `fields[]`: `expression.sql` = column name; `datatype` from the column's `suggested` Neo4j type (falling back to source `type`) |
-| `primary_keys` | `primary_key` |
-| `foreign_keys` | `relationships[]`: `from` = this table, `to` = `references.table`, with `from_columns`/`to_columns` |
-| column `nullable`, `size`, `supported` | `nonportable_extensions[NEO4J]` |
-| — | Ossie `metrics` (model- and dataset-scoped) → `extensions.custom.ossie.metrics`. OGS has no metrics. |
+As implemented in phase 2 (`convert/semantic.py`):
+
+| OGS `extensions.data_source_tables` | Ossie semantic model | Notes |
+|---|---|---|
+| table id, `source` | dataset `name`, `source` | Names that clash case-insensitively are renamed and reported. |
+| column | field: `name` = column name, `expression.sql` = the column as an SQL identifier | Names that aren't plain identifiers are double-quoted (`"full name"`). |
+| column `suggested` (Neo4j type) | field `datatype` | INTEGER* → Integer, FLOAT* → Float, ZONED DATETIME → DateTimeTz, LOCAL TIME → Time; lists, vectors, points and the like → Opaque. Without `suggested`, the datatype is inferred from the source `type` (`VARCHAR` → String). A `suggested` type that the datatype wouldn't reproduce, such as FLOAT32, is stashed. |
+| column source `type`, `size`, `nullable`, `supported`, vector `dimension`, `custom` | `nonportable_extensions[NEO4J]` on the field | Ossie has no nullability or source types. |
+| `primary_keys` (column names) | `primary_key` (field names) | |
+| foreign key | relationship: `from` = the table holding the key (the many side), `to` = the referenced table | Name = foreign-key id, made unique across the model. If the key doesn't list referenced columns, `to_columns` is the referenced table's primary key, flagged `implicit_columns`. A foreign key to an unknown table or undeclared columns is kept on the dataset and reported. |
+| model `name`, `description` | semantic model `name`, `description` | With an ontology, the OGS name comes from the ontology, so the semantic model's name is stashed only if it differs (Flights: `Flights` vs `Flights semantic model`). Without an ontology, OGS `id`, `version` and `custom` ride on the semantic model's `NEO4J` extension. |
+
+Ossie ➜ OGS specifics:
+- **Derived fields.** A field whose expression is not a bare column reference, or that only has `dialects`, has no OGS column. An example is tpcds `customer_full_name = c_first_name || ' ' || c_last_name`. It is stashed (`custom.ossie.derived_fields`) and restored at its original position. So is a second field on a column that's already used. A primary key or relationship that uses a derived field is stashed and reported.
+- A field whose name differs from its column (`order_id` over `ORDER_NO`) keeps the column name in OGS and stashes the field name.
+- `Decimal` → suggested `FLOAT`, reported as approximated, with `Decimal` stashed. `Opaque` → no suggested type.
+- Field `description`, `label`, `dimension` and `ai_context`, dataset `description`, `ai_context` and `unique_keys`, and **metrics** (model- and dataset-scoped) → stashed in `custom.ossie` and reported. OGS has no metrics.
+- Case-insensitive name references (`from: Orders` for dataset `orders`) are resolved, and the original spelling is stashed.
 
 ### 3.3 Mapping layer: OGS mappings ↔ Ossie mapping document
 
@@ -158,45 +168,42 @@ Package layout (`src/ossie_neo4j/`):
 | `ossie/normalize.py` | Turns a string `ai_context` into an object. Expands `prefix:local` IRIs, and provides `compact_iri` for the reverse. |
 | `ogs/rules.py`, `ossie/rules.py` | The cross-reference rules that JSON Schema can't express: the OGS "Core" rules, plus Ossie name-resolution and ontology rules. |
 | `pipeline.py` | `read()`: parse ➜ schema ➜ model ➜ rules ➜ normalize. A stage runs only if the earlier stages found no errors. |
-| `convert/to_ossie.py`, `convert/to_ogs.py` | The two directions of the ontology conversion (§3.1). |
+| `convert/to_ossie.py`, `convert/to_ogs.py` | The two directions of the ontology conversion (§3.1). They also assemble the semantic-model half. |
+| `convert/semantic.py` | Tables ⇄ semantic model, in both directions (§3.2). |
 | `convert/common.py` | Conventions both directions share: annotation keys, default ids, names, verbalizations and relationship types, constraint derivation, and count ⇄ multiplicity. |
-| `convert/types.py` | Neo4j type ⇄ value concept tables, generated `Neo4j*` value types, and the value-type resolver. |
+| `convert/types.py` | Neo4j type ⇄ value concept tables, generated `Neo4j*` value types, and the value-type resolver. Also Neo4j type ⇄ Ossie field `datatype`, and source-type inference. |
 | `convert/report.py` | The loss report, with entries of kind `stashed`, `approximated` or `dropped`. |
-| `convert/__init__.py` | Public API: `to_ossie()` and `to_neo4j()`. Each validates the input, converts it, re-validates the output, and returns the output with its loss report. |
+| `convert/__init__.py` | Public API: `to_ossie(ogs)` gives an ontology and/or a semantic model; `to_neo4j(ontology_or_sm, semantic_model=...)` gives one OGS document. Each validates the inputs, converts them, re-validates the outputs, and returns `Conversion.documents` with a loss report. |
 | `cli.py` | `ossie-neo4j validate`, `normalize`, `to-ossie` and `to-neo4j`. |
 
 ## 4. CLI
 
-Phase 1:
+```bash
+uv run ossie-neo4j to-ossie tests/fixtures/ogs/movies-import.yaml --out-dir out/ --report loss.json
+```
+This writes `out/movies-import.ontology.yaml` and `out/movies-import.semantic_model.yaml`.
 
 ```bash
-uv run ossie-neo4j to-ossie tests/fixtures/ogs/movies.yaml -o movies.ontology.yaml --report loss.json
+uv run ossie-neo4j to-neo4j out/movies-import.ontology.yaml --semantic-model out/movies-import.semantic_model.yaml -o back.ogs.yaml
 ```
 
 ```bash
-uv run ossie-neo4j to-neo4j tests/fixtures/ossie/flights.ontology.yaml -o flights.ogs.yaml
+uv run ossie-neo4j to-neo4j tests/fixtures/ossie/tpcds_semantic_model.yaml -o tpcds.ogs.yaml
 ```
+A semantic model on its own produces an OGS document with tables and no nodes. Deriving nodes from datasets is core-only mode, in phase 4.
 
-Output goes to stdout as YAML unless `-o` is given (`.yaml` or `.json`). A summary of the loss report goes to stderr. Flags:
+Output:
+- `to-ossie` writes an ontology if the model has nodes, and a semantic model if it has tables.
+- Use `--out-dir DIR` (with `--format yaml|json`) for more than one document. `-o FILE` works when there's one.
+- Without either option, YAML goes to stdout, one `---`-separated document per output.
+- A summary of the loss report goes to stderr.
+
+Flags:
 - `--report FILE` writes the full loss report as JSON;
 - `--strict` exits with code 2 if anything was approximated or dropped;
-- `--no-stash` produces clean output with no vendor annotations or custom data. Everything that would have been stashed is reported as dropped.
+- `--no-stash` produces clean output with no vendor annotations, extensions or custom data. Everything that would have been stashed is reported as dropped.
 
-Planned for phases 2–3, once semantic models and mappings are converted:
-
-```bash
-ossie-neo4j to-ossie model.ogs.yaml --out ./out/
-```
-→ `<id>.ontology.yaml`, plus `<id>.semantic_model.yaml` and `<id>.mapping.yaml`.
-
-```bash
-ossie-neo4j to-neo4j --ontology x.ontology.yaml --semantic-model x.semantic_model.yaml --mapping x.mapping.yaml -o model.ogs.yaml
-```
-
-```bash
-ossie-neo4j to-neo4j --semantic-model x.semantic_model.yaml -o model.ogs.yaml
-```
-The last form runs in core-only mode.
+Planned for phase 3: `--mapping` on `to-neo4j`, and a `<id>.mapping.yaml` output from `to-ossie`.
 
 ## 5. Testing strategy
 
@@ -223,7 +230,7 @@ The last form runs in core-only mode.
 |---|---|
 | 0 ✅ | Repo scaffold, pinned schemas, Pydantic models for both specs, fixtures, normalizers |
 | 1 ✅ | OGS nodes/relationships/properties ↔ Ossie ontology, with stashing and the loss report |
-| 2 | OGS tables ↔ Ossie semantic model (datasets, fields, keys, FK relationships, metrics stash) |
+| 2 ✅ | OGS tables ↔ Ossie semantic model (datasets, fields, keys, FK relationships, metrics stash) |
 | 3 | OGS mappings ↔ Ossie mapping document |
 | 4 | Core-only mode, Ossie 0.1.1 → 0.3.0 migration on input, CLI polish |
 | 5 | Upstream: contribute to `apache/ossie-converters`, and propose the `NEO4J` vendor token |

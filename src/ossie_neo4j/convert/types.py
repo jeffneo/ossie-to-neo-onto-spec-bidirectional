@@ -127,3 +127,72 @@ def element(t: T | None) -> T:
     if t is None:
         return T.ANY
     return t.element if t.is_list else t
+
+
+# --- semantic model datatypes (phase 2) ------------------------------------------------------
+#
+# Ossie fields carry a logical ``datatype``. OGS table columns carry a source ``type`` (free
+# text, e.g. VARCHAR) and a ``suggested`` Neo4j type. The two are mapped through ``suggested``.
+
+DATATYPE_FOR: dict[T, str] = {
+    T.STRING: "String",
+    T.INTEGER: "Integer",
+    T.INTEGER32: "Integer",
+    T.INTEGER16: "Integer",
+    T.INTEGER8: "Integer",
+    T.FLOAT: "Float",
+    T.FLOAT32: "Float",
+    T.BOOLEAN: "Boolean",
+    T.DATE: "Date",
+    T.LOCAL_TIME: "Time",
+    T.ZONED_TIME: "Time",
+    T.LOCAL_DATETIME: "DateTime",
+    T.ZONED_DATETIME: "DateTimeTz",
+}
+"""Neo4j type ➜ Ossie datatype. Anything not listed (lists, vectors, points, ...) is Opaque."""
+
+NEO4J_FOR_DATATYPE: dict[str, T | None] = {
+    "String": T.STRING,
+    "Integer": T.INTEGER,
+    "Decimal": T.FLOAT,  # approximated: Neo4j has no exact decimal
+    "Float": T.FLOAT,
+    "Boolean": T.BOOLEAN,
+    "Date": T.DATE,
+    "Time": T.LOCAL_TIME,
+    "DateTime": T.LOCAL_DATETIME,
+    "DateTimeTz": T.ZONED_DATETIME,
+    "Opaque": None,
+}
+"""Ossie datatype ➜ the Neo4j type suggested for a column."""
+
+
+def datatype_for(t: T | str | None) -> str | None:
+    if t is None:
+        return None
+    return DATATYPE_FOR.get(T(t), "Opaque")
+
+
+_SOURCE_TYPES: list[tuple[tuple[str, ...], str]] = [
+    (("TIMESTAMP_TZ", "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE", "DATETIMEOFFSET"), "DateTimeTz"),
+    (("TIMESTAMP", "DATETIME", "SMALLDATETIME"), "DateTime"),
+    (("DATE",), "Date"),
+    (("TIME",), "Time"),
+    (("BOOL", "BIT"), "Boolean"),
+    (("DECIMAL", "NUMERIC", "NUMBER", "MONEY", "DEC"), "Decimal"),
+    (("DOUBLE", "FLOAT", "REAL"), "Float"),
+    (("INT", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "SERIAL", "BIGSERIAL"), "Integer"),
+    (("CHAR", "VARCHAR", "NVARCHAR", "NCHAR", "TEXT", "STRING", "CLOB", "UUID"), "String"),
+]
+
+
+def datatype_from_source(source_type: str | None) -> str | None:
+    """A best-effort Ossie datatype from a column's source type name (e.g. ``VARCHAR(20)``)."""
+    if not source_type:
+        return None
+    s = source_type.upper()
+    if s.startswith("INTERVAL"):  # not an integer, despite the prefix
+        return None
+    for needles, datatype in _SOURCE_TYPES:
+        if s.startswith(needles):
+            return datatype
+    return None

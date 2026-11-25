@@ -8,6 +8,7 @@ from conftest import FIXTURES, fixture, minimal_ogs, minimal_ontology
 
 from ossie_neo4j.cli import main
 from ossie_neo4j.convert import ConversionError, Loss, to_neo4j, to_ossie
+from ossie_neo4j.io import DocumentKind
 from ossie_neo4j.pipeline import read
 
 OGS_SOURCES = ["ogs/movies.yaml", "ogs/movies.json", "ogs/movies-import.yaml"]
@@ -39,10 +40,20 @@ def _ann(d: dict) -> dict:
 # --- round trips -----------------------------------------------------------------------------
 
 
+def _back_to_neo4j(conversion, **kw) -> dict:
+    """Convert every document of an OGS ➜ Ossie conversion back to OGS."""
+    docs = conversion.documents
+    onto = docs.get(DocumentKind.OSSIE_ONTOLOGY)
+    sm = docs.get(DocumentKind.OSSIE_SEMANTIC_MODEL)
+    if onto is None:
+        return to_neo4j(sm, **kw).output
+    return to_neo4j(onto, semantic_model=sm, **kw).output
+
+
 @pytest.mark.parametrize("name", OGS_SOURCES)
 def test_ogs_round_trip_is_lossless(name):
     src = FIXTURES / name
-    back = to_neo4j(to_ossie(src).output).output
+    back = _back_to_neo4j(to_ossie(src))
     assert _normalized(back) == _normalized(src)
 
 
@@ -56,7 +67,7 @@ def test_ossie_round_trip_is_lossless(name):
 @pytest.mark.parametrize("name", OGS_SOURCES)
 def test_ogs_round_trip_adds_no_ossie_stash(name):
     """Values that would be regenerated identically are never stashed, so there's no noise."""
-    back = to_neo4j(to_ossie(FIXTURES / name).output).output
+    back = _back_to_neo4j(to_ossie(FIXTURES / name))
     assert '"ossie"' not in json.dumps(back)
 
 
@@ -69,7 +80,7 @@ def test_ossie_round_trip_adds_no_neo4j_annotations():
 def test_no_stash_still_produces_valid_output(name):
     convert = to_ossie if name.startswith("ogs/") else to_neo4j
     result = convert(FIXTURES / name, stash=False)
-    text = json.dumps(result.output)
+    text = json.dumps(result.documents)
     assert '"ossie"' not in text and "neo4j:" not in text
     assert all(e.kind is not Loss.STASHED for e in result.report.entries)
 
